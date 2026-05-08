@@ -29,6 +29,7 @@ import argparse
 import random
 import time
 import ctypes
+import winsound
 import tkinter as tk
 from PIL import Image, ImageTk
 
@@ -301,6 +302,7 @@ class DesktopPet:
 
                         # Show OK button for waving state, hide otherwise
                         if new_state == "waving":
+                            self._play_complete_sound()
                             self._show_ok_button()
                         else:
                             self._hide_ok_button()
@@ -468,6 +470,13 @@ class DesktopPet:
         self._hide_tooltip()
         self._write_state_file("idle", "")
         self._hide_ok_button()
+
+    def _play_complete_sound(self):
+        """Play a completion notification sound."""
+        try:
+            winsound.MessageBeep(winsound.MB_OK)
+        except Exception:
+            pass
 
     def _show_ok_button(self):
         """Show the OK button below the pet (during waving state)."""

@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python \"C:/Users/Admin/.codebuddy/skills/workbuddy-pet/scripts/pet_launch.py\"",
+            "command": "python \"C:/Users/Admin/.workbuddy/skills/workbuddy-pet/scripts/pet_launch.py\"",
             "timeout": 10
           }
         ]
@@ -17,7 +17,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python \"C:/Users/Admin/.codebuddy/skills/workbuddy-pet/scripts/pet_bridge.py\" thinking \"正在思考...\"",
+            "command": "python \"C:/Users/Admin/.workbuddy/skills/workbuddy-pet/scripts/pet_bridge.py\" thinking \"正在思考...\"",
             "timeout": 5
           }
         ]
@@ -29,7 +29,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python \"C:/Users/Admin/.codebuddy/skills/workbuddy-pet/scripts/pet_bridge.py\" running \"工作中...\"",
+            "command": "python \"C:/Users/Admin/.workbuddy/skills/workbuddy-pet/scripts/pet_bridge.py\" running \"工作中...\"",
             "timeout": 5
           }
         ]
@@ -40,7 +40,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python \"C:/Users/Admin/.codebuddy/skills/workbuddy-pet/scripts/pet_bridge.py\" waving \"完成！\"",
+            "command": "python \"C:/Users/Admin/.workbuddy/skills/workbuddy-pet/scripts/pet_bridge.py\" waving \"完成！\"",
             "timeout": 5
           }
         ]

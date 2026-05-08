@@ -1,0 +1,63 @@
+{
+  "name": "blue-slime",
+  "version": "1.0",
+  "frame_width": 192,
+  "frame_height": 208,
+  "columns": 8,
+  "states": [
+    {
+      "name": "idle",
+      "row": 0,
+      "frames": 8,
+      "fps": 8
+    },
+    {
+      "name": "running-right",
+      "row": 1,
+      "frames": 8,
+      "fps": 10
+    },
+    {
+      "name": "running-left",
+      "row": 2,
+      "frames": 8,
+      "fps": 10
+    },
+    {
+      "name": "waving",
+      "row": 3,
+      "frames": 8,
+      "fps": 10
+    },
+    {
+      "name": "jumping",
+      "row": 4,
+      "frames": 8,
+      "fps": 10
+    },
+    {
+      "name": "failed",
+      "row": 5,
+      "frames": 8,
+      "fps": 6
+    },
+    {
+      "name": "waiting",
+      "row": 6,
+      "frames": 8,
+      "fps": 8
+    },
+    {
+      "name": "running",
+      "row": 7,
+      "frames": 8,
+      "fps": 10
+    },
+    {
+      "name": "review",
+      "row": 8,
+      "frames": 8,
+      "fps": 8
+    }
+  ]
+}

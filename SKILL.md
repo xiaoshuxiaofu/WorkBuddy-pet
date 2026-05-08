@@ -1,39 +1,69 @@
 ---
 name: workbuddy-pet
-description: Desktop pet generator and player for WorkBuddy. This skill should be used when users want to create, customize, or launch a desktop pet companion. Triggers on requests like "hatch a pet", "launch desktop pet", "create a pet", "show me the pet", or any mention of desktop companions/pets. Supports chat-aware mode with auto-detection of agent activity and pixel-art speech bubbles.
+description: WorkBuddy 桌面宠物生成与播放器。当用户想要创建、自定义或启动桌面宠物伙伴时使用。触发词包括"孵化宠物""启动桌面宠物""创建宠物""看看宠物"等桌面伴侣相关请求。支持聊天感知模式，通过 hooks 自动同步 agent 状态并显示像素风对话气泡。
 agent_created: true
 ---
 
 # WorkBuddy Pet
 
-## Overview
+## 概述
 
-Generate Codex-compatible sprite atlas pets and display them as desktop companions using a tkinter transparent window. The pet supports 9 animation states, drag-to-move, right-click menu, double-click state cycling, auto-wander mode, and **chat-aware mode** with pixel-art speech bubbles that reflect the agent's current activity.
+生成 Codex 兼容的精灵图集宠物，以 tkinter 透明窗口的形式显示在桌面。支持 9 种动画状态、拖拽移动、右键菜单、双击切换状态、自动漫游，以及**聊天感知模式**——宠物会实时反映 AI agent 的当前工作状态，配合像素风对话气泡和完成提示音。
 
-## Quick Start
+## 快速开始
 
-**Step 1: Start the daemon**
+### 方式一：首次启动（自动安装 hooks）
+
 ```bash
-python <SKILL_DIR>/scripts/pet_daemon.py &
+python <SKILL_DIR>/scripts/pet_launch.py
 ```
 
-**Step 2: Launch the pet**
+首次运行会自动将 hooks 注入到 `~/.workbuddy/settings.json`，后续重启 WorkBuddy 即可通过 hooks 自动触发。
+
+### 方式二：手动安装 hooks
+
 ```bash
+# 安装 hooks 到 settings.json（幂等，重复运行不会重复添加）
+python <SKILL_DIR>/scripts/install_hooks.py
+
+# 卸载 hooks
+python <SKILL_DIR>/scripts/install_hooks.py --uninstall
+```
+
+安装后重启 WorkBuddy，hooks 生效。此时每次会话开始会自动启动 daemon + 宠物。
+
+### 方式三：手动启动（调试用）
+
+```bash
+# Step 1: 启动 daemon
+python <SKILL_DIR>/scripts/pet_daemon.py &
+
+# Step 2: 启动宠物
 python <SKILL_DIR>/scripts/desktop_pet.py --atlas <SKILL_DIR>/assets/demo/blue-slime_atlas.png --manifest <SKILL_DIR>/assets/demo/pet.json --scale 2.0
 ```
 
-> The daemon auto-detects WorkBuddy activity and sets the pet to "thinking" with a pixel bubble. Manual state control via `pet_bridge.py`.
+## Hooks 说明
 
-## Chat-Aware Mode
+宠物通过 WorkBuddy hooks 实现状态同步。hooks 需要注册在 `~/.workbuddy/settings.json` 的 `hooks` 字段中：
 
-The pet reads `~/.workbuddy/pet_state.json` (polled every 500ms). The daemon (`pet_daemon.py`) writes to this file automatically:
+| 事件 | 宠物状态 | 气泡文字 |
+|------|---------|---------|
+| `UserPromptSubmit` | waiting | "正在思考..." |
+| `PostToolUse` | running | "工作中..." |
+| `Stop` | waving | "完成！" + 提示音 |
+| `SessionStart` | — | 自动启动 daemon + 宠物 |
 
-- **Auto-detection**: Watches the current conversation transcript file; when modified → "thinking" with bubble "正在思考..."; after 4s idle → back to idle
-- **Manual override**: `python <SKILL_DIR>/scripts/pet_bridge.py <state> [message]` sets any state with custom bubble
-- **Persistence**: "waving" state persists until manually cleared (OK button or next message)
-- **OK button**: Appears below pet during "waving" state; click to focus WorkBuddy + return to idle
+## 聊天感知模式
 
-### Manual bridge usage
+宠物通过轮询 `~/.workbuddy/pet_state.json`（每 500ms）读取状态：
+
+- **Hooks 驱动**：hooks 调用 `pet_bridge.py` 更新状态 → daemon 写入 state 文件 → 宠物读取并切换动画
+- **手动控制**：`python <SKILL_DIR>/scripts/pet_bridge.py <状态> [消息]` 可随时手动设置
+- **waving 持久**：完成状态会保持直到用户点击 OK 按钮或下次消息触发
+- **OK 按钮**：完成时宠物下方出现 OK 按钮，点击可聚焦 WorkBuddy 窗口并回到待机
+- **完成提示音**：进入 waving 状态时播放系统提示音
+
+### 手动 bridge 用法
 ```bash
 python <SKILL_DIR>/scripts/pet_bridge.py thinking "正在思考..."
 python <SKILL_DIR>/scripts/pet_bridge.py running "工作中..."
@@ -41,43 +71,39 @@ python <SKILL_DIR>/scripts/pet_bridge.py waving "完成！"
 python <SKILL_DIR>/scripts/pet_bridge.py idle
 ```
 
-Available states: `idle`, `thinking`, `running`, `coding`, `writing`, `reading`, `review`, `waving`, `failed`
+可用状态：`idle`, `thinking`, `running`, `coding`, `writing`, `reading`, `review`, `waving`, `failed`
 
-## Core Capabilities
+## 核心功能
 
-### 1. Launch Desktop Pet
+### 1. 启动桌面宠物
 
-Run `desktop_pet.py` with a sprite atlas and optional manifest file. The pet appears as a borderless, transparent, always-on-top window at the bottom-right of the screen.
+使用精灵图集启动宠物窗口，出现在屏幕右下角。
 
-**Parameters:**
-- `--atlas` (required): Path to sprite atlas PNG
-- `--manifest` (optional): Path to pet.json manifest
-- `--scale` (optional): Display scale factor, default 2.0
+**参数：**
+- `--atlas`（必填）：精灵图集 PNG 路径
+- `--manifest`（可选）：pet.json 清单文件路径
+- `--scale`（可选）：缩放倍数，默认 2.0
 
-**Controls:**
-| Action | How |
-|--------|-----|
-| Drag pet | Left-click + drag |
-| Switch state | Double-click (cycles through states) |
-| Context menu | Right-click (state selection, wander toggle, exit) |
+**操作：**
+| 操作 | 方式 |
+|------|------|
+| 拖拽宠物 | 左键拖拽 |
+| 切换状态 | 双击（循环切换） |
+| 右键菜单 | 右键（状态选择、漫游开关、退出） |
 
-### 2. Generate Demo Pet Atlas
-
-Create a procedurally-generated pixel-art blue slime sprite atlas:
+### 2. 生成 Demo 精灵图集
 
 ```bash
-python <SKILL_DIR>/scripts/generate_demo_atlas.py --output <output_dir> --name <pet_name>
+python <SKILL_DIR>/scripts/generate_demo_atlas.py --output <输出目录> --name <宠物名>
 ```
 
-### 3. Compose Custom Atlas from Frames
-
-If individual frame images are available (e.g. from AI image generation), compose them into a sprite atlas:
+### 3. 从帧图片合成图集
 
 ```bash
-python <SKILL_DIR>/scripts/compose_atlas.py --input-dir <frames_dir> --output <atlas.png> --name <pet_name>
+python <SKILL_DIR>/scripts/compose_atlas.py --input-dir <帧目录> --output <图集.png> --name <宠物名>
 ```
 
-Expected input structure:
+目录结构：
 ```
 frames_dir/
     idle/           frame_0.png ... frame_7.png
@@ -91,47 +117,43 @@ frames_dir/
     review/         frame_0.png ... frame_7.png
 ```
 
-### 4. Validate Atlas
-
-Check if a sprite atlas meets the Codex Pet specification:
+### 4. 验证图集
 
 ```bash
-python <SKILL_DIR>/scripts/validate_atlas.py --atlas <atlas.png> --manifest <pet.json>
+python <SKILL_DIR>/scripts/validate_atlas.py --atlas <图集.png> --manifest <pet.json>
 ```
 
-### 5. Generate Contact Sheet
-
-Create a thumbnail grid overview of the sprite atlas:
+### 5. 生成缩略图
 
 ```bash
-python <SKILL_DIR>/scripts/make_contact_sheet.py --atlas <atlas.png> --output <contact.png>
+python <SKILL_DIR>/scripts/make_contact_sheet.py --atlas <图集.png> --output <缩略图.png>
 ```
 
-## Sprite Atlas Specification
+## 精灵图集规格
 
-| Property | Value |
-|----------|-------|
-| Grid | 8 columns x 9 rows |
-| Frame size | 192 x 208 px |
-| Atlas size | 1536 x 1872 px |
-| Format | PNG with transparent background |
+| 属性 | 值 |
+|------|-----|
+| 网格 | 8 列 x 9 行 |
+| 帧尺寸 | 192 x 208 px |
+| 图集尺寸 | 1536 x 1872 px |
+| 格式 | PNG 透明背景 |
 
-### Animation States
+### 动画状态
 
-| Row | State | Description | FPS |
-|-----|-------|-------------|-----|
-| 0 | idle | Standing idle, gentle breathing | 8 |
-| 1 | running-right | Running toward the right | 10 |
-| 2 | running-left | Running toward the left | 10 |
-| 3 | waving | Waving hand/greeting | 8 |
-| 4 | jumping | Jumping up and down | 10 |
-| 5 | failed | Sad/failed expression | 6 |
-| 6 | waiting | Looking around, waiting | 6 |
-| 7 | running | Running in place | 10 |
-| 8 | review | Inspecting code | 8 |
+| 行 | 状态 | 描述 | FPS |
+|----|------|------|-----|
+| 0 | idle | 待机呼吸 | 8 |
+| 1 | running-right | 向右跑 | 10 |
+| 2 | running-left | 向左跑 | 10 |
+| 3 | waving | 挥手 | 8 |
+| 4 | jumping | 跳跃 | 10 |
+| 5 | failed | 失败 | 6 |
+| 6 | waiting | 等待 | 6 |
+| 7 | running | 原地跑 | 10 |
+| 8 | review | 审查代码 | 8 |
 
-## Dependencies
+## 依赖
 
 - Python 3.10+
 - Pillow (`pip install Pillow`)
-- tkinter (included with standard Python on Windows/macOS)
+- tkinter（Windows/macOS 自带）
