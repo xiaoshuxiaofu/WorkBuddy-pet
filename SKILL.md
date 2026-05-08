@@ -59,6 +59,7 @@ python <SKILL_DIR>/scripts/pet_launch.py
 | 事件 | 宠物状态 | 气泡文字 |
 |------|---------|---------|
 | `UserPromptSubmit` | thinking | "正在思考..." |
+| `PreToolUse` | thinking | "正在思考..." |
 | `PostToolUse` | running | "工作中..." |
 | `Stop` | waving | "完成！" + 提示音 |
 | `SessionEnd` | idle | — |
