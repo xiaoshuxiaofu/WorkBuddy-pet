@@ -286,14 +286,21 @@ class DesktopPet:
             self._bubble_height = 0
             return
 
-        # Measure text using tk's font metrics
-        font = ("Courier New", 9, "bold")
-        char_w = 7   # approx pixel width per char at this font size
-        max_chars = max(len(line) for line in text.split("\n"))
-        num_lines = text.count("\n") + 1
-        line_h = 14
+        font = ("Courier New", 10, "bold")
+        line_h = 15
 
-        bw = max(max_chars * char_w + BUBBLE_PAD_X * 2 + 4, 40)
+        # Measure actual text width by creating a temporary text item
+        lines = text.split("\n")
+        max_line_w = 0
+        for line in lines:
+            tid = self.bubble_canvas.create_text(0, 0, text=line, font=font, anchor="nw")
+            bbox = self.bubble_canvas.bbox(tid)
+            self.bubble_canvas.delete(tid)
+            if bbox:
+                max_line_w = max(max_line_w, bbox[2] - bbox[0])
+
+        num_lines = len(lines)
+        bw = max(max_line_w + BUBBLE_PAD_X * 2 + 4, 40)
         bh = num_lines * line_h + BUBBLE_PAD_Y * 2 + BUBBLE_ARROW_H + 4
 
         # Pixel-art border: draw stepped outline
@@ -363,7 +370,7 @@ class DesktopPet:
         pet_x = self.root.winfo_x()
         pet_y = self.root.winfo_y()
         offset_x = (self.frame_w - self._bubble_width) // 2 if self._bubble_width < self.frame_w else -20
-        self.tooltip_win.geometry(f"+{pet_x + offset_x}+{pet_y - self._bubble_height - 4}")
+        self.tooltip_win.geometry(f"+{pet_x + offset_x}+{pet_y - self._bubble_height + 2}")
         self.tooltip_win.deiconify()
         self.tooltip_visible = True
 
@@ -475,7 +482,7 @@ class DesktopPet:
             # Move tooltip along with pet
             if self.tooltip_visible:
                 offset_x = (self.frame_w - self._bubble_width) // 2 if self._bubble_width < self.frame_w else -20
-                self.tooltip_win.geometry(f"+{x + offset_x}+{y - self._bubble_height - 4}")
+                self.tooltip_win.geometry(f"+{x + offset_x}+{y - self._bubble_height + 2}")
 
     def _on_release(self, event):
         """Stop dragging."""
