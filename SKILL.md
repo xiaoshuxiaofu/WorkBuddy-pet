@@ -1,6 +1,6 @@
 ---
 name: workbuddy-pet
-description: Desktop pet generator and player for WorkBuddy. This skill should be used when users want to create, customize, or launch a desktop pet companion. Triggers on requests like "hatch a pet", "launch desktop pet", "create a pet", "show me the pet", or any mention of desktop companions/pets.
+description: Desktop pet generator and player for WorkBuddy. This skill should be used when users want to create, customize, or launch a desktop pet companion. Triggers on requests like "hatch a pet", "launch desktop pet", "create a pet", "show me the pet", or any mention of desktop companions/pets. Supports chat-aware mode with auto-detection of agent activity and pixel-art speech bubbles.
 agent_created: true
 ---
 
@@ -8,21 +8,40 @@ agent_created: true
 
 ## Overview
 
-Generate Codex-compatible sprite atlas pets and display them as desktop companions using a tkinter transparent window. The pet supports 9 animation states, drag-to-move, right-click menu, double-click state cycling, and auto-wander mode.
+Generate Codex-compatible sprite atlas pets and display them as desktop companions using a tkinter transparent window. The pet supports 9 animation states, drag-to-move, right-click menu, double-click state cycling, auto-wander mode, and **chat-aware mode** with pixel-art speech bubbles that reflect the agent's current activity.
 
 ## Quick Start
 
-Launch the default blue-slime pet:
+**Step 1: Start the daemon**
+```bash
+python <SKILL_DIR>/scripts/pet_daemon.py &
+```
 
+**Step 2: Launch the pet**
 ```bash
 python <SKILL_DIR>/scripts/desktop_pet.py --atlas <SKILL_DIR>/assets/demo/blue-slime_atlas.png --manifest <SKILL_DIR>/assets/demo/pet.json --scale 2.0
 ```
 
-On Windows, can also use:
+> The daemon auto-detects WorkBuddy activity and sets the pet to "thinking" with a pixel bubble. Manual state control via `pet_bridge.py`.
 
-```powershell
-python "<SKILL_DIR>/scripts/desktop_pet.py" --atlas "<SKILL_DIR>/assets/demo/blue-slime_atlas.png" --manifest "<SKILL_DIR>/assets/demo/pet.json" --scale 2.0
+## Chat-Aware Mode
+
+The pet reads `~/.workbuddy/pet_state.json` (polled every 500ms). The daemon (`pet_daemon.py`) writes to this file automatically:
+
+- **Auto-detection**: Watches the current conversation transcript file; when modified → "thinking" with bubble "正在思考..."; after 4s idle → back to idle
+- **Manual override**: `python <SKILL_DIR>/scripts/pet_bridge.py <state> [message]` sets any state with custom bubble
+- **Persistence**: "waving" state persists until manually cleared (OK button or next message)
+- **OK button**: Appears below pet during "waving" state; click to focus WorkBuddy + return to idle
+
+### Manual bridge usage
+```bash
+python <SKILL_DIR>/scripts/pet_bridge.py thinking "正在思考..."
+python <SKILL_DIR>/scripts/pet_bridge.py running "工作中..."
+python <SKILL_DIR>/scripts/pet_bridge.py waving "完成！"
+python <SKILL_DIR>/scripts/pet_bridge.py idle
 ```
+
+Available states: `idle`, `thinking`, `running`, `coding`, `writing`, `reading`, `review`, `waving`, `failed`
 
 ## Core Capabilities
 
