@@ -363,6 +363,24 @@ class DesktopPet:
         self._bubble_height = bh
         self.bubble_canvas.config(width=bw, height=bh)
 
+    def _get_content_top(self):
+        """Find the topmost non-transparent pixel row in the current sprite frame.
+        Returns the Y offset (in display pixels) from window top to visible content."""
+        state_info = self.states.get(self.current_state)
+        if not state_info:
+            return 0
+        row = state_info["row"]
+        # Scan the atlas row for the first non-white pixel row
+        frame_h = FRAME_HEIGHT
+        for py in range(frame_h):
+            for px in range(0, FRAME_WIDTH, 4):  # Sample every 4px for speed
+                pixel = self.atlas.getpixel((px, row * FRAME_HEIGHT + py))
+                if len(pixel) == 4 and pixel[3] > 0:
+                    # Found non-transparent pixel (not white-transparent-mapped)
+                    if not (pixel[0] > 240 and pixel[1] > 240 and pixel[2] > 240):
+                        return int(py * self.scale)
+        return 0
+
     def _show_tooltip(self, text: str = None):
         """Show pixel bubble above the pet."""
         msg = text or ""
@@ -371,11 +389,14 @@ class DesktopPet:
 
         self._draw_pixel_bubble(msg)
 
-        # Position above pet, centered
+        # Position above pet's visible content, not window edge
         pet_x = self.root.winfo_x()
         pet_y = self.root.winfo_y()
+        content_top = self._get_content_top()
         offset_x = (self.frame_w - self._bubble_width) // 2 if self._bubble_width < self.frame_w else -20
-        self.tooltip_win.geometry(f"+{pet_x + offset_x}+{pet_y - self._bubble_height + 2}")
+        # Place bubble right above the visible sprite content
+        bubble_y = pet_y + content_top - self._bubble_height + 2
+        self.tooltip_win.geometry(f"+{pet_x + offset_x}+{bubble_y}")
         self.tooltip_win.deiconify()
         self.tooltip_visible = True
 
@@ -486,8 +507,9 @@ class DesktopPet:
             self.root.geometry(f"+{x}+{y}")
             # Move tooltip along with pet
             if self.tooltip_visible:
+                ct = self._get_content_top()
                 offset_x = (self.frame_w - self._bubble_width) // 2 if self._bubble_width < self.frame_w else -20
-                self.tooltip_win.geometry(f"+{x + offset_x}+{y - self._bubble_height + 2}")
+                self.tooltip_win.geometry(f"+{x + offset_x}+{y + ct - self._bubble_height + 2}")
 
     def _on_release(self, event):
         """Stop dragging."""
