@@ -187,8 +187,9 @@ class DesktopPet:
                 command=lambda s=state_name: self.set_state(s),
             )
         self.menu.add_separator()
-        self.menu.add_command(label="随机漫游", command=self._start_wander)
-        self.menu.add_command(label="停止漫游", command=self._stop_wander)
+        self.wander_var = tk.BooleanVar(value=False)
+        self.menu.add_checkbutton(label="随机漫游", variable=self.wander_var,
+                                   command=self._toggle_wander)
         self.menu.add_separator()
         self.chat_aware_var = tk.BooleanVar(value=self.chat_aware)
         self.menu.add_checkbutton(label="聊天感知模式", variable=self.chat_aware_var,
@@ -430,6 +431,12 @@ class DesktopPet:
         else:
             self._start_wander()
 
+    def _toggle_wander(self):
+        if self.wander_var.get():
+            self._start_wander()
+        else:
+            self._stop_wander()
+
     # ── Drag & input ──────────────────────────────────────────
 
     def _on_press(self, event):
@@ -483,6 +490,7 @@ class DesktopPet:
     def _start_wander(self):
         if self.wander_job:
             return
+        self.wander_var.set(True)
 
         def wander():
             if self.dragging:
@@ -508,6 +516,7 @@ class DesktopPet:
         self.wander_job = self.root.after(WANDER_INTERVAL, wander)
 
     def _stop_wander(self):
+        self.wander_var.set(False)
         if self.wander_job:
             self.root.after_cancel(self.wander_job)
             self.wander_job = None
