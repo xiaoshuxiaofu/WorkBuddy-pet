@@ -4,6 +4,8 @@ pixel_bubble.py - Pixel-art speech bubble rendering for the desktop pet.
 import tkinter as tk
 from pet_constants import BUBBLE_BG, BUBBLE_BORDER, BUBBLE_TEXT, BUBBLE_PAD_X, BUBBLE_PAD_Y, BUBBLE_ARROW_H
 
+TRANSPARENT_COLOR = "#F0F0F2"
+
 
 class PixelBubble:
     """A pixel-art style speech bubble displayed above the pet."""
@@ -19,11 +21,11 @@ class PixelBubble:
         self._win.overrideredirect(True)
         self._win.attributes("-topmost", True)
         try:
-            self._win.wm_attributes("-transparentcolor", "white")
+            self._win.wm_attributes("-transparentcolor", TRANSPARENT_COLOR)
         except Exception:
             pass
 
-        self._canvas = tk.Canvas(self._win, bg="white", highlightthickness=0)
+        self._canvas = tk.Canvas(self._win, bg=TRANSPARENT_COLOR, highlightthickness=0)
         self._canvas.pack()
         self._win.withdraw()
 
@@ -100,7 +102,7 @@ class PixelBubble:
                           (0, bh - BUBBLE_ARROW_H - notch),
                           (bw - notch, bh - BUBBLE_ARROW_H - notch)]:
             self._canvas.create_rectangle(nx, ny, nx + notch, ny + notch,
-                                           fill="white", outline="")
+                                           fill=TRANSPARENT_COLOR, outline="")
 
         # Border (2px)
         bt = 1

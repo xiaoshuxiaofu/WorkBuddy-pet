@@ -23,6 +23,9 @@ import ctypes
 import winsound
 import tkinter as tk
 
+# Use a specific color for window transparency that won't clash with pet pixels
+TRANSPARENT_COLOR = "#F0F0F2"
+
 from PIL import Image, ImageTk
 
 from pet_constants import (
@@ -137,18 +140,18 @@ class DesktopPet:
         self.root.overrideredirect(True)
         self.root.attributes("-topmost", True)
         try:
-            self.root.wm_attributes("-transparentcolor", "white")
+            self.root.wm_attributes("-transparentcolor", TRANSPARENT_COLOR)
         except Exception:
             pass
 
-        self.main_frame = tk.Frame(self.root, bg="white")
+        self.main_frame = tk.Frame(self.root, bg=TRANSPARENT_COLOR)
         if self.debug_border:
             self.main_frame.config(highlightbackground="#FF00FF", highlightthickness=2)
         self.main_frame.pack()
 
         self.canvas = tk.Canvas(
             self.main_frame, width=self.frame_w, height=self.frame_h,
-            bg="white", highlightthickness=0,
+            bg=TRANSPARENT_COLOR, highlightthickness=0,
         )
         self.canvas.pack()
 
@@ -156,7 +159,7 @@ class DesktopPet:
         self.photo_item = self.canvas.create_image(0, 0, anchor="nw")
 
         # ── OK button (shown only during waving state) ──
-        self.ok_btn_frame = tk.Frame(self.main_frame, bg="white")
+        self.ok_btn_frame = tk.Frame(self.main_frame, bg=TRANSPARENT_COLOR)
         self.ok_btn = tk.Button(
             self.ok_btn_frame, text="OK",
             font=("Courier New", 10, "bold"),
@@ -287,7 +290,7 @@ class DesktopPet:
     # ── Animation ─────────────────────────────────────────────
 
     def _precache_frames(self):
-        """Pre-extract all frames as PhotoImages with white→transparent."""
+        """Pre-extract all frames as PhotoImages, preserving original alpha."""
         for state_name, info in self.states.items():
             row = info["row"]
             self.photo_frames[state_name] = []
@@ -295,19 +298,6 @@ class DesktopPet:
                 x1, y1 = col * FRAME_WIDTH, row * FRAME_HEIGHT
                 frame = self.atlas.crop((x1, y1, x1 + FRAME_WIDTH, y1 + FRAME_HEIGHT))
                 frame = frame.resize((self.frame_w, self.frame_h), Image.LANCZOS)
-
-                # Replace near-white pixels with transparent
-                data = list(frame.get_flattened_data())
-                new_data = []
-                for item in data:
-                    if len(item) == 4 and item[3] > 0:
-                        if item[0] > 240 and item[1] > 240 and item[2] > 240:
-                            new_data.append((255, 255, 255, 0))
-                        else:
-                            new_data.append(item)
-                    else:
-                        new_data.append(item)
-                frame.putdata(new_data)
                 self.photo_frames[state_name].append(ImageTk.PhotoImage(frame))
 
     def _animate(self):
