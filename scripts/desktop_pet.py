@@ -41,7 +41,7 @@ COLUMNS = 8
 DEFAULT_FPS = 10
 WANDER_INTERVAL = 5000  # ms between wander actions
 WANDER_STEP = 60  # pixels per wander step
-STATE_POLL_INTERVAL = 500  # ms between state file checks
+STATE_POLL_INTERVAL = 150  # ms between state file checks (faster for catching rapid transitions)
 
 # Default state file path
 DEFAULT_STATE_FILE = os.path.join(os.path.expanduser("~"), ".workbuddy", "pet_state.json")

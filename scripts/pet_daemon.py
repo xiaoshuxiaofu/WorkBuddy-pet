@@ -26,6 +26,7 @@ from urllib.parse import urlparse, parse_qs
 
 DEFAULT_PORT = 19876
 STATE_FILE = os.path.join(os.path.expanduser("~"), ".workbuddy", "pet_state.json")
+MIN_DWELL = 0.3  # Minimum seconds a state must persist before being overwritten
 
 
 class PetDaemon:
@@ -35,13 +36,50 @@ class PetDaemon:
         self.last_update = time.time()
         self.lock = threading.Lock()
         self._stop_event = threading.Event()
+        self._dwell_timer = None
+        self._pending_state = None
+        self._pending_message = ""
 
     def set_state(self, state: str, message: str = ""):
         with self.lock:
-            self.current_state = state
-            self.current_message = message
-            self.last_update = time.time()
-            self._write_state_file(state, message)
+            elapsed = time.time() - self.last_update
+            if elapsed < MIN_DWELL and self.current_state != state:
+                # Too fast — schedule this new state for later
+                self._pending_state = state
+                self._pending_message = message
+                if self._dwell_timer is None:
+                    delay = MIN_DWELL - elapsed + 0.05
+                    self._dwell_timer = threading.Timer(delay, self._apply_pending)
+                    self._dwell_timer.daemon = True
+                    self._dwell_timer.start()
+                return
+
+            # Cancel any pending timer since we're applying a state now
+            if self._dwell_timer is not None:
+                self._dwell_timer.cancel()
+                self._dwell_timer = None
+                self._pending_state = None
+                self._pending_message = ""
+
+            self._apply_state(state, message)
+
+    def _apply_state(self, state: str, message: str):
+        """Actually apply a state change (write to file)."""
+        self.current_state = state
+        self.current_message = message
+        self.last_update = time.time()
+        self._write_state_file(state, message)
+
+    def _apply_pending(self):
+        """Called by dwell timer to apply a deferred state change."""
+        with self.lock:
+            if self._pending_state is not None:
+                state = self._pending_state
+                msg = self._pending_message
+                self._pending_state = None
+                self._pending_message = ""
+                self._dwell_timer = None
+                self._apply_state(state, msg)
 
     def _write_state_file(self, state: str, message: str):
         try:
