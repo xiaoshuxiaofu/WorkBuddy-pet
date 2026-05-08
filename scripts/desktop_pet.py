@@ -198,6 +198,11 @@ class DesktopPet:
         self.menu.add_separator()
         self.menu.add_command(label="退出", command=self._quit)
 
+        # ── Pet switcher submenu ──
+        self._pet_dir = os.path.dirname(os.path.dirname(os.path.abspath(atlas_path)))  # assets/
+        self._current_pet_name = os.path.basename(os.path.dirname(atlas_path))
+        self._build_pet_switcher()
+
         # ── Position at bottom-right ──
         screen_w = self.root.winfo_screenwidth()
         screen_h = self.root.winfo_screenheight()
@@ -483,6 +488,59 @@ class DesktopPet:
         x = max(0, min(x, sw - self.frame_w))
         y = max(0, min(y, sh - self.frame_h - 30))
         self.root.geometry(f"+{x}+{y}")
+
+    # ── Pet switcher ─────────────────────────────────────────
+
+    def _build_pet_switcher(self):
+        """Scan assets/ for available pets and build the switcher submenu."""
+        self._pet_menu = tk.Menu(self.menu, tearoff=0)
+        pets = self._scan_pets()
+
+        if not pets:
+            self._pet_menu.add_command(label="(无其他宠物)", state="disabled")
+        else:
+            for name, atlas_path, manifest_path in pets:
+                check = "✓ " if name == self._current_pet_name else "  "
+                self._pet_menu.add_command(
+                    label=f"{check}{name}",
+                    command=lambda n=name, a=atlas_path, m=manifest_path: self._switch_pet(n, a, m),
+                )
+
+        # Insert switcher after state submenu and before退出
+        self.menu.insert_cascade(1, label="切换宠物", menu=self._pet_menu)
+
+    def _scan_pets(self) -> list[tuple[str, str, str]]:
+        """Scan assets directory for available pets. Returns [(name, atlas, manifest), ...]."""
+        pets = []
+        try:
+            for entry in sorted(os.listdir(self._pet_dir)):
+                pet_dir = os.path.join(self._pet_dir, entry)
+                if not os.path.isdir(pet_dir):
+                    continue
+                atlas = os.path.join(pet_dir, f"{entry}_atlas.png")
+                manifest = os.path.join(pet_dir, "pet.json")
+                if os.path.exists(atlas) and os.path.exists(manifest):
+                    pets.append((entry, atlas, manifest))
+        except OSError:
+            pass
+        return pets
+
+    def _switch_pet(self, name: str, atlas: str, manifest: str):
+        """Switch to a different pet by restarting the process."""
+        if name == self._current_pet_name:
+            return
+        # Save preference
+        _save_config({"active_pet": name})
+        # Spawn new instance with new pet, then quit
+        try:
+            import subprocess
+            subprocess.Popen(
+                [sys.executable, __file__, "--atlas", atlas,
+                 "--manifest", manifest, "--scale", str(self.scale)],
+            )
+        except Exception:
+            pass
+        self._quit()
 
     # ── Lifecycle ─────────────────────────────────────────────
 

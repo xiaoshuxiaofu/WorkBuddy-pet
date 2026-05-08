@@ -3,9 +3,11 @@ pet_launch.py - Smart launcher that starts daemon + pet if not already running.
 Designed to be called from SessionStart hook.
 
 On first launch, automatically installs hooks into ~/.workbuddy/settings.json.
+Reads active pet from pet_config.json to remember last selection.
 """
 import os
 import sys
+import json
 import subprocess
 import socket
 import time
@@ -13,9 +15,46 @@ import time
 DAEMON_PORT = 19876
 SKILL_DIR = os.path.join(os.path.expanduser("~"), ".workbuddy", "skills", "workbuddy-pet")
 SCRIPTS_DIR = os.path.join(SKILL_DIR, "scripts")
-ATLAS = os.path.join(SKILL_DIR, "assets", "diana", "diana_atlas.png")
-MANIFEST = os.path.join(SKILL_DIR, "assets", "diana", "pet.json")
+ASSETS_DIR = os.path.join(SKILL_DIR, "assets")
+CONFIG_FILE = os.path.join(os.path.expanduser("~"), ".workbuddy", "pet_config.json")
 HOOKS_MARKER = os.path.join(os.path.expanduser("~"), ".workbuddy", ".pet-hooks-installed")
+
+
+def get_active_pet() -> tuple[str, str]:
+    """Return (atlas_path, manifest_path) for the active pet. Falls back to diana."""
+    pet_name = "diana"
+
+    # Try reading saved preference
+    try:
+        if os.path.exists(CONFIG_FILE):
+            with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+                config = json.load(f)
+            pet_name = config.get("active_pet", "diana")
+    except (OSError, json.JSONDecodeError):
+        pass
+
+    # Try the saved pet
+    atlas = os.path.join(ASSETS_DIR, pet_name, f"{pet_name}_atlas.png")
+    manifest = os.path.join(ASSETS_DIR, pet_name, "pet.json")
+    if os.path.exists(atlas) and os.path.exists(manifest):
+        return atlas, manifest
+
+    # Fallback: scan for any available pet
+    try:
+        for entry in sorted(os.listdir(ASSETS_DIR)):
+            pet_dir = os.path.join(ASSETS_DIR, entry)
+            if not os.path.isdir(pet_dir):
+                continue
+            atlas = os.path.join(pet_dir, f"{entry}_atlas.png")
+            manifest = os.path.join(pet_dir, "pet.json")
+            if os.path.exists(atlas) and os.path.exists(manifest):
+                return atlas, manifest
+    except OSError:
+        pass
+
+    # Absolute last resort: hardcoded diana
+    return (os.path.join(ASSETS_DIR, "diana", "diana_atlas.png"),
+            os.path.join(ASSETS_DIR, "diana", "pet.json"))
 
 
 def _popen_kwargs():
@@ -63,6 +102,7 @@ def ensure_hooks_installed():
 def launch():
     python = sys.executable
     popen_kw = _popen_kwargs()
+    atlas, manifest = get_active_pet()
 
     ensure_hooks_installed()
 
@@ -78,7 +118,7 @@ def launch():
     print("[launch] Starting pet...")
     subprocess.Popen(
         [python, os.path.join(SCRIPTS_DIR, "desktop_pet.py"),
-         "--atlas", ATLAS, "--manifest", MANIFEST, "--scale", "1.0"], **popen_kw,
+         "--atlas", atlas, "--manifest", manifest, "--scale", "1.0"], **popen_kw,
     )
     print("[launch] Done")
 

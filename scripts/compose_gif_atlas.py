@@ -36,12 +36,18 @@ DEFAULT_DURATIONS = {
 
 
 def find_gif(gifs_dir: str, state: str) -> str | None:
-    """Find a GIF file matching a state name."""
-    for ext in (".gif", ".GIF"):
-        for prefix in (f"diana-{state}", f"{state}", f"*-{state}"):
-            exact = os.path.join(gifs_dir, f"diana-{state}{ext}")
-            if os.path.exists(exact):
-                return exact
+    """Find a GIF file matching a state name using common naming patterns."""
+    entries = os.listdir(gifs_dir)
+    # Try exact state match first, then fuzzy
+    patterns = [
+        lambda e: e.lower() == f"{state}.gif",
+        lambda e: e.lower().endswith(f"-{state}.gif"),
+        lambda e: state in e.lower() and e.lower().endswith(".gif"),
+    ]
+    for pat in patterns:
+        for entry in entries:
+            if pat(entry):
+                return os.path.join(gifs_dir, entry)
     return None
 
 
