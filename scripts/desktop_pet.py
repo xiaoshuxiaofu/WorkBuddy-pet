@@ -407,9 +407,11 @@ class DesktopPet:
             self.tooltip_visible = False
 
     def _schedule_auto_revert(self):
-        """Schedule auto-revert to idle after timeout (safety net)."""
+        """Schedule auto-revert to idle after timeout (safety net).
+        Skip for 'waving' state — it persists until manually cleared."""
         self._cancel_auto_revert()
-        self.auto_revert_job = self.root.after(AUTO_REVERT_TIMEOUT, self._auto_revert_to_idle)
+        if self.last_chat_state != "waving":
+            self.auto_revert_job = self.root.after(AUTO_REVERT_TIMEOUT, self._auto_revert_to_idle)
 
     def _cancel_auto_revert(self):
         """Cancel pending auto-revert."""
@@ -510,6 +512,7 @@ class DesktopPet:
                 ct = self._get_content_top()
                 offset_x = (self.frame_w - self._bubble_width) // 2 if self._bubble_width < self.frame_w else -20
                 self.tooltip_win.geometry(f"+{x + offset_x}+{y + ct - self._bubble_height + 2}")
+                self.tooltip_win.lift()  # Keep bubble above pet window
 
     def _on_release(self, event):
         """Stop dragging."""

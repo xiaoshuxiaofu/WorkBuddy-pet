@@ -204,7 +204,7 @@ class PetDaemon:
         """Background thread: auto-revert to idle after timeout (safety net)."""
         while not self._stop_event.is_set():
             with self.lock:
-                if (self.current_state != "idle" and
+                if (self.current_state not in ("idle", "waving") and
                         time.time() - self.last_update > self.timeout):
                     print(f"[daemon] Auto-revert: {self.current_state} → idle")
                     self.current_state = "idle"
