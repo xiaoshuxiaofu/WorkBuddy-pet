@@ -54,10 +54,11 @@ BUBBLE_ARROW_H = 6         # Arrow/triangle height
 
 class DesktopPet:
     def __init__(self, atlas_path: str, manifest_path: str = None, scale: float = 2.0,
-                 state_file: str = None, chat_aware: bool = True):
+                 state_file: str = None, chat_aware: bool = True, debug_border: bool = False):
         self.scale = scale
         self.frame_w = int(FRAME_WIDTH * scale)
         self.frame_h = int(FRAME_HEIGHT * scale)
+        self.debug_border = debug_border
         self.current_state = "idle"
         self.current_frame = 0
         self.dragging = False
@@ -106,6 +107,10 @@ class DesktopPet:
         # Main frame to hold pet
         self.main_frame = tk.Frame(self.root, bg="white")
         self.main_frame.pack()
+
+        # Debug border to show actual window bounds
+        if self.debug_border:
+            self.main_frame.config(highlightbackground="#FF00FF", highlightthickness=2)
 
         # Canvas for displaying the pet
         self.canvas = tk.Canvas(
@@ -576,6 +581,7 @@ def main():
     parser.add_argument("--scale", type=float, default=2.0, help="Display scale factor")
     parser.add_argument("--state-file", default=None, help="Path to chat state JSON file")
     parser.add_argument("--no-chat-aware", action="store_true", help="Disable chat-aware mode")
+    parser.add_argument("--debug-border", action="store_true", help="Show magenta border around pet window for debugging")
     args = parser.parse_args()
 
     if not os.path.exists(args.atlas):
@@ -588,6 +594,7 @@ def main():
         args.scale,
         state_file=args.state_file,
         chat_aware=not args.no_chat_aware,
+        debug_border=args.debug_border,
     )
     pet.run()
 
