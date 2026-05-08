@@ -13,8 +13,8 @@ import time
 DAEMON_PORT = 19876
 SKILL_DIR = os.path.join(os.path.expanduser("~"), ".workbuddy", "skills", "workbuddy-pet")
 SCRIPTS_DIR = os.path.join(SKILL_DIR, "scripts")
-ATLAS = os.path.join(SKILL_DIR, "assets", "demo", "blue-slime_atlas.png")
-MANIFEST = os.path.join(SKILL_DIR, "assets", "demo", "pet.json")
+ATLAS = os.path.join(SKILL_DIR, "assets", "diana", "diana_atlas.png")
+MANIFEST = os.path.join(SKILL_DIR, "assets", "diana", "pet.json")
 HOOKS_MARKER = os.path.join(os.path.expanduser("~"), ".workbuddy", ".pet-hooks-installed")
 
 
