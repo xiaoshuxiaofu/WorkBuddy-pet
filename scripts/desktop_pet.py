@@ -9,18 +9,16 @@ Features:
 - Pet wanders around the screen edges
 - Double-click to toggle state
 - Chat-aware mode: reads state file to sync with chat context
-- Context usage bar: shows token usage and percentage below the pet
+- Pixel-art speech bubble for chat messages
 
 Usage:
     python desktop_pet.py --atlas <atlas.png> [--manifest <pet.json>] [--scale 2.0]
     python desktop_pet.py --atlas <atlas.png> --state-file <path>
 
-State file format (JSON, written by the chat agent):
+State file format (JSON, written by the chat agent or pet daemon):
     {
         "state": "running",
-        "message": "Processing your request...",
-        "context_used": 85000,
-        "context_total": 128000
+        "message": "Processing your request..."
     }
 """
 
@@ -45,13 +43,13 @@ AUTO_REVERT_TIMEOUT = 15000  # ms before auto-reverting chat state to idle
 # Default state file path
 DEFAULT_STATE_FILE = os.path.join(os.path.expanduser("~"), ".workbuddy", "pet_state.json")
 
-# Context bar colors
-CTX_COLOR_LOW = "#4CAF50"      # Green <50%
-CTX_COLOR_MEDIUM = "#FF9800"   # Orange 50-80%
-CTX_COLOR_HIGH = "#F44336"     # Red >80%
-CTX_COLOR_BG = "#E0E0E0"       # Background gray
-CTX_BAR_HEIGHT = 8
-CTX_TEXT_HEIGHT = 14
+# Pixel bubble colors
+BUBBLE_BG = "#f8f8f0"     # Off-white (classic pixel UI)
+BUBBLE_BORDER = "#3a3a3a"  # Dark gray
+BUBBLE_TEXT = "#3a3a3a"    # Dark gray
+BUBBLE_PAD_X = 8
+BUBBLE_PAD_Y = 4
+BUBBLE_ARROW_H = 6         # Arrow/triangle height
 
 
 class DesktopPet:
@@ -70,8 +68,6 @@ class DesktopPet:
         self.last_state_mtime = 0
         self.last_chat_state = None
         self.auto_revert_job = None  # scheduled auto-revert to idle
-        self.context_used = 0
-        self.context_total = 128000
 
         # Load atlas image
         self.atlas = Image.open(atlas_path).convert("RGBA")
@@ -107,7 +103,7 @@ class DesktopPet:
         except Exception:
             pass
 
-        # Main frame to hold pet + context bar
+        # Main frame to hold pet
         self.main_frame = tk.Frame(self.root, bg="white")
         self.main_frame.pack()
 
@@ -121,69 +117,26 @@ class DesktopPet:
         )
         self.canvas.pack()
 
-        # === Context usage bar (below pet) ===
-        ctx_frame = tk.Frame(self.main_frame, bg="white", height=CTX_BAR_HEIGHT + CTX_TEXT_HEIGHT + 4)
-        ctx_frame.pack(fill="x", padx=4)
-        ctx_frame.pack_propagate(False)
-
-        # Progress bar canvas
-        bar_width = self.frame_w - 8
-        self.ctx_bar_canvas = tk.Canvas(
-            ctx_frame,
-            width=bar_width,
-            height=CTX_BAR_HEIGHT + CTX_TEXT_HEIGHT + 4,
-            bg="white",
-            highlightthickness=0,
-        )
-        self.ctx_bar_canvas.pack()
-
-        # Context text
-        self.ctx_text_id = self.ctx_bar_canvas.create_text(
-            bar_width // 2, 2,
-            text="上下文: 0K / 128K (0%)",
-            font=("Microsoft YaHei", 8),
-            fill="#666666",
-            anchor="n",
-        )
-
-        # Progress bar background
-        bar_y = CTX_TEXT_HEIGHT + 4
-        self.ctx_bar_bg = self.ctx_bar_canvas.create_rectangle(
-            0, bar_y, bar_width, bar_y + CTX_BAR_HEIGHT,
-            fill=CTX_COLOR_BG, outline="",
-        )
-        # Progress bar fill
-        self.ctx_bar_fill = self.ctx_bar_canvas.create_rectangle(
-            0, bar_y, 0, bar_y + CTX_BAR_HEIGHT,
-            fill=CTX_COLOR_LOW, outline="",
-        )
-        self.bar_width = bar_width
-        self.bar_y = bar_y
-
         # Tooltip window for chat state messages (separate top-level to avoid
         # being clipped by the transparent-color of the main window)
         self.tooltip_win = tk.Toplevel(self.root)
         self.tooltip_win.overrideredirect(True)
         self.tooltip_win.attributes("-topmost", True)
-        # Make the tooltip window itself transparent on white background
         try:
             self.tooltip_win.wm_attributes("-transparentcolor", "white")
         except Exception:
             pass
-        self.tooltip_label = tk.Label(
+
+        # Bubble canvas (drawn pixel-art style)
+        self.bubble_canvas = tk.Canvas(
             self.tooltip_win,
-            text="",
-            bg="#FFFFDD",
-            fg="#333333",
-            font=("Microsoft YaHei", 9),
-            relief="solid",
-            borderwidth=1,
-            padx=6,
-            pady=3,
-            wraplength=200,
+            bg="white",
+            highlightthickness=0,
         )
-        self.tooltip_label.pack()
+        self.bubble_canvas.pack()
         self.tooltip_visible = False
+        self._bubble_width = 0
+        self._bubble_height = 0
         # Start hidden
         self.tooltip_win.withdraw()
 
@@ -204,16 +157,12 @@ class DesktopPet:
         self.photo_frames = {}
         self._precache_frames()
 
-        # Bind events (bind to main_frame for context bar area too)
+        # Bind events
         self.canvas.bind("<ButtonPress-1>", self._on_press)
         self.canvas.bind("<B1-Motion>", self._on_drag)
         self.canvas.bind("<ButtonRelease-1>", self._on_release)
         self.canvas.bind("<Double-Button-1>", self._on_double_click)
         self.canvas.bind("<ButtonPress-3>", self._show_menu)
-        self.ctx_bar_canvas.bind("<ButtonPress-1>", self._on_press)
-        self.ctx_bar_canvas.bind("<B1-Motion>", self._on_drag)
-        self.ctx_bar_canvas.bind("<ButtonRelease-1>", self._on_release)
-        self.ctx_bar_canvas.bind("<ButtonPress-3>", self._show_menu)
 
         # State name Chinese labels
         self.state_labels = {
@@ -255,7 +204,7 @@ class DesktopPet:
         screen_w = self.root.winfo_screenwidth()
         screen_h = self.root.winfo_screenheight()
         start_x = screen_w - self.frame_w - 50
-        start_y = screen_h - self.frame_h - CTX_BAR_HEIGHT - CTX_TEXT_HEIGHT - 90
+        start_y = screen_h - self.frame_h - 50
         self.root.geometry(f"+{start_x}+{start_y}")
 
         # Initialize state file
@@ -273,42 +222,6 @@ class DesktopPet:
         if not self.chat_aware:
             self._start_wander()
 
-    def _update_context_bar(self):
-        """Update the context usage bar display."""
-        if self.context_total <= 0:
-            pct = 0
-        else:
-            pct = min(self.context_used / self.context_total, 1.0)
-
-        # Format text
-        used_k = self.context_used / 1000
-        total_k = self.context_total / 1000
-        pct_str = f"{pct * 100:.1f}%"
-        text = f"上下文: {used_k:.0f}K / {total_k:.0f}K ({pct_str})"
-        self.ctx_bar_canvas.itemconfig(self.ctx_text_id, text=text)
-
-        # Update bar
-        fill_width = int(self.bar_width * pct)
-        self.ctx_bar_canvas.coords(
-            self.ctx_bar_fill,
-            0, self.bar_y, fill_width, self.bar_y + CTX_BAR_HEIGHT,
-        )
-
-        # Color based on percentage
-        if pct < 0.5:
-            color = CTX_COLOR_LOW
-        elif pct < 0.8:
-            color = CTX_COLOR_MEDIUM
-        else:
-            color = CTX_COLOR_HIGH
-        self.ctx_bar_canvas.itemconfig(self.ctx_bar_fill, fill=color)
-
-        # Also update text color for high usage
-        if pct >= 0.8:
-            self.ctx_bar_canvas.itemconfig(self.ctx_text_id, fill=CTX_COLOR_HIGH)
-        else:
-            self.ctx_bar_canvas.itemconfig(self.ctx_text_id, fill="#666666")
-
     def _init_state_file(self):
         """Create the state file directory and initial state."""
         state_dir = os.path.dirname(self.state_file)
@@ -324,8 +237,6 @@ class DesktopPet:
                     "state": state,
                     "message": message,
                     "timestamp": time.time(),
-                    "context_used": self.context_used,
-                    "context_total": self.context_total,
                 }, f, indent=2)
         except Exception:
             pass
@@ -342,14 +253,6 @@ class DesktopPet:
                     new_state = data.get("state", "idle")
                     message = data.get("message", "")
 
-                    # Update context info
-                    ctx_used = data.get("context_used", 0)
-                    ctx_total = data.get("context_total", 128000)
-                    if ctx_used != self.context_used or ctx_total != self.context_total:
-                        self.context_used = ctx_used
-                        self.context_total = ctx_total
-                        self._update_context_bar()
-
                     # Map aliased/unknown states to known animation states
                     anim_state = self.state_aliases.get(new_state, new_state)
 
@@ -360,8 +263,7 @@ class DesktopPet:
                         self.set_state(anim_state)
 
                         if message:
-                            self.tooltip_label.config(text=message)
-                            self._show_tooltip()
+                            self._show_tooltip(message)
                         else:
                             self._hide_tooltip()
 
@@ -375,22 +277,98 @@ class DesktopPet:
 
         self.root.after(STATE_POLL_INTERVAL, self._poll_chat_state)
 
-    def _show_tooltip(self):
-        """Show tooltip above the pet."""
-        if not self.tooltip_visible and self.tooltip_label.cget("text"):
-            # Position the tooltip window above the pet
-            pet_x = self.root.winfo_x()
-            pet_y = self.root.winfo_y()
-            # Wait for the label to update its size, then center it above pet
-            self.tooltip_win.update_idletasks()
-            tw = self.tooltip_label.winfo_width()
-            offset_x = (self.frame_w - tw) // 2
-            self.tooltip_win.geometry(f"+{pet_x + offset_x}+{pet_y - 35}")
-            self.tooltip_win.deiconify()
-            self.tooltip_visible = True
+    def _draw_pixel_bubble(self, text: str):
+        """Draw a pixel-art style speech bubble on the bubble canvas."""
+        self.bubble_canvas.delete("all")
+
+        if not text:
+            self._bubble_width = 0
+            self._bubble_height = 0
+            return
+
+        # Measure text using tk's font metrics
+        font = ("Courier New", 9, "bold")
+        char_w = 7   # approx pixel width per char at this font size
+        max_chars = max(len(line) for line in text.split("\n"))
+        num_lines = text.count("\n") + 1
+        line_h = 14
+
+        bw = max(max_chars * char_w + BUBBLE_PAD_X * 2 + 4, 40)
+        bh = num_lines * line_h + BUBBLE_PAD_Y * 2 + BUBBLE_ARROW_H + 4
+
+        # Pixel-art border: draw stepped outline
+        # Outer dark border
+        self.bubble_canvas.create_rectangle(0, 0, bw, bh - BUBBLE_ARROW_H,
+                                             fill=BUBBLE_BG, outline="")
+        # Draw pixel-notch corners (simulate pixel art)
+        notch = 3  # corner notch size in pixels
+        # Top-left notch
+        self.bubble_canvas.create_rectangle(0, 0, notch, notch, fill="white", outline="")
+        # Top-right notch
+        self.bubble_canvas.create_rectangle(bw - notch, 0, bw, notch, fill="white", outline="")
+        # Bottom-left notch (above arrow)
+        self.bubble_canvas.create_rectangle(0, bh - BUBBLE_ARROW_H - notch, notch, bh - BUBBLE_ARROW_H,
+                                             fill="white", outline="")
+        # Bottom-right notch
+        self.bubble_canvas.create_rectangle(bw - notch, bh - BUBBLE_ARROW_H - notch,
+                                             bw, bh - BUBBLE_ARROW_H, fill="white", outline="")
+
+        # Draw border lines (pixel-style: 2px thick)
+        # Top
+        self.bubble_canvas.create_line(notch, 1, bw - notch, 1, fill=BUBBLE_BORDER, width=2)
+        # Bottom
+        self.bubble_canvas.create_line(notch, bh - BUBBLE_ARROW_H - 1,
+                                        bw - notch, bh - BUBBLE_ARROW_H - 1,
+                                        fill=BUBBLE_BORDER, width=2)
+        # Left
+        self.bubble_canvas.create_line(1, notch, 1, bh - BUBBLE_ARROW_H - notch,
+                                        fill=BUBBLE_BORDER, width=2)
+        # Right
+        self.bubble_canvas.create_line(bw - 1, notch, bw - 1, bh - BUBBLE_ARROW_H - notch,
+                                        fill=BUBBLE_BORDER, width=2)
+
+        # Arrow/triangle pointing down at bottom-center
+        ax = bw // 2
+        arrow_points = [
+            ax - 5, bh - BUBBLE_ARROW_H,
+            ax + 5, bh - BUBBLE_ARROW_H,
+            ax, bh,
+        ]
+        self.bubble_canvas.create_polygon(arrow_points, fill=BUBBLE_BG, outline=BUBBLE_BORDER, width=1)
+
+        # Draw text
+        for i, line in enumerate(text.split("\n")):
+            y = BUBBLE_PAD_Y + 2 + i * line_h
+            self.bubble_canvas.create_text(
+                bw // 2, y,
+                text=line,
+                font=font,
+                fill=BUBBLE_TEXT,
+                anchor="n",
+            )
+
+        self._bubble_width = bw
+        self._bubble_height = bh
+        self.bubble_canvas.config(width=bw, height=bh)
+
+    def _show_tooltip(self, text: str = None):
+        """Show pixel bubble above the pet."""
+        msg = text or ""
+        if not msg.strip():
+            return
+
+        self._draw_pixel_bubble(msg)
+
+        # Position above pet, centered
+        pet_x = self.root.winfo_x()
+        pet_y = self.root.winfo_y()
+        offset_x = (self.frame_w - self._bubble_width) // 2 if self._bubble_width < self.frame_w else -20
+        self.tooltip_win.geometry(f"+{pet_x + offset_x}+{pet_y - self._bubble_height - 4}")
+        self.tooltip_win.deiconify()
+        self.tooltip_visible = True
 
     def _hide_tooltip(self):
-        """Hide the tooltip."""
+        """Hide the pixel bubble."""
         if self.tooltip_visible:
             self.tooltip_win.withdraw()
             self.tooltip_visible = False
@@ -496,10 +474,8 @@ class DesktopPet:
             self.root.geometry(f"+{x}+{y}")
             # Move tooltip along with pet
             if self.tooltip_visible:
-                self.tooltip_win.update_idletasks()
-                tw = self.tooltip_label.winfo_width()
-                offset_x = (self.frame_w - tw) // 2
-                self.tooltip_win.geometry(f"+{x + offset_x}+{y - 35}")
+                offset_x = (self.frame_w - self._bubble_width) // 2 if self._bubble_width < self.frame_w else -20
+                self.tooltip_win.geometry(f"+{x + offset_x}+{y - self._bubble_height - 4}")
 
     def _on_release(self, event):
         """Stop dragging."""
@@ -562,7 +538,7 @@ class DesktopPet:
         screen_w = self.root.winfo_screenwidth()
         screen_h = self.root.winfo_screenheight()
         x = max(0, min(x, screen_w - self.frame_w))
-        y = max(0, min(y, screen_h - self.frame_h))
+        y = max(0, min(y, screen_h - self.frame_h - 30))
 
         self.root.geometry(f"+{x}+{y}")
 
