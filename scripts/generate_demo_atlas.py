@@ -27,6 +27,19 @@ STATE_NAMES = [
     "jumping", "failed", "waiting", "running", "review",
 ]
 
+# Codex-style per-frame durations (ms) and frame counts per state
+STATE_CONFIG = {
+    "idle":          {"frames": 6, "durations": [280, 110, 110, 140, 140, 320]},
+    "running-right": {"frames": 8, "durations": [120, 120, 120, 120, 120, 120, 120, 220]},
+    "running-left":  {"frames": 8, "durations": [120, 120, 120, 120, 120, 120, 120, 220]},
+    "waving":        {"frames": 4, "durations": [140, 140, 140, 280]},
+    "jumping":       {"frames": 5, "durations": [140, 140, 140, 140, 280]},
+    "failed":        {"frames": 8, "durations": [140, 140, 140, 140, 140, 140, 140, 240]},
+    "waiting":       {"frames": 6, "durations": [150, 150, 150, 150, 150, 260]},
+    "running":       {"frames": 6, "durations": [120, 120, 120, 120, 120, 220]},
+    "review":        {"frames": 6, "durations": [150, 150, 150, 150, 150, 280]},
+}
+
 # Preset creature definitions: (body_color, eye_color, accent_color, creature_type)
 PRESETS = {
     "blue-slime":  {"body": (80, 160, 255), "eye": (40, 40, 60),   "accent": (130, 200, 255), "type": "slime"},
@@ -195,10 +208,11 @@ def generate_atlas(output_dir: str, pet_name: str,
     states_config = []
 
     for row, state_name in enumerate(STATE_NAMES):
-        for col in range(COLUMNS):
+        num_frames = STATE_CONFIG[state_name]["frames"]
+        for col in range(num_frames):
             frame = Image.new("RGBA", (FRAME_WIDTH, FRAME_HEIGHT), (0, 0, 0, 0))
             d = ImageDraw.Draw(frame)
-            t = col / max(COLUMNS - 1, 1)
+            t = col / max(num_frames - 1, 1)
 
             kwargs = {
                 "body_color": body_color,
@@ -277,8 +291,13 @@ def generate_atlas(output_dir: str, pet_name: str,
             y = row * FRAME_HEIGHT
             atlas.paste(frame, (x, y), frame)
 
-        fps = {"idle": 8, "waiting": 8, "review": 8, "failed": 6}.get(state_name, 10)
-        states_config.append({"name": state_name, "row": row, "frames": COLUMNS, "fps": fps})
+        cfg = STATE_CONFIG[state_name]
+        states_config.append({
+            "name": state_name,
+            "row": row,
+            "frames": cfg["frames"],
+            "durations": cfg["durations"],
+        })
 
     # Save atlas
     atlas_path = os.path.join(output_dir, f"{pet_name}_atlas.png")

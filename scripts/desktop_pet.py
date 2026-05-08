@@ -125,6 +125,7 @@ class DesktopPet:
                 self.states[s["name"]] = {
                     "row": s["row"], "frames": s["frames"],
                     "fps": s.get("fps", DEFAULT_FPS),
+                    "durations": s.get("durations", []),
                 }
         else:
             for i, name in enumerate(STATE_NAMES):
@@ -300,9 +301,15 @@ class DesktopPet:
 
         self.current_frame %= len(frames)
         self.canvas.itemconfig(self.photo_item, image=frames[self.current_frame])
-        self.current_frame += 1
 
-        delay = int(1000 / state.get("fps", DEFAULT_FPS))
+        # Determine delay: per-frame durations > flat fps
+        durations = state.get("durations", [])
+        if durations and self.current_frame < len(durations):
+            delay = durations[self.current_frame]
+        else:
+            delay = int(1000 / state.get("fps", DEFAULT_FPS))
+
+        self.current_frame += 1
         self.root.after(delay, self._animate)
 
     def set_state(self, state_name: str):
