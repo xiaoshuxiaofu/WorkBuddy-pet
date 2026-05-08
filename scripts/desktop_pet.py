@@ -257,15 +257,24 @@ class DesktopPet:
                         if anim_state != "idle":
                             self._stop_wander()
                         self.set_state(anim_state)
+
+                        # Show bubble (use default text if none provided)
                         if message:
                             self._show_bubble(message)
+                        elif new_state == "agree":
+                            self._show_bubble("需要确认操作")
                         else:
                             self.bubble.hide()
+
                         self._play_state_sound(new_state)
-                        if new_state == "waving":
+
+                        # Show appropriate button
+                        if new_state == "agree":
+                            self._show_agree_button()
+                        elif new_state == "waving":
                             self._show_ok_button()
                         else:
-                            self._hide_ok_button()
+                            self._hide_buttons()
         except (OSError, json.JSONDecodeError):
             pass
 
@@ -369,17 +378,32 @@ class DesktopPet:
                         return int((py + 1) * self.scale)
         return self.frame_h
 
-    def _show_ok_button(self):
+    def _show_agree_button(self):
+        """Show '同意' button that focuses WorkBuddy for manual approval."""
+        self.ok_btn.config(text="同意", command=self._on_agree_click)
         self.ok_btn_frame.pack(fill="x", padx=4)
 
-    def _hide_ok_button(self):
+    def _show_ok_button(self):
+        """Show 'OK' button for task completion."""
+        self.ok_btn.config(text="OK", command=self._on_ok_click)
+        self.ok_btn_frame.pack(fill="x", padx=4)
+
+    def _hide_buttons(self):
         self.ok_btn_frame.pack_forget()
 
     def _on_ok_click(self):
         _focus_workbuddy_window()
         self.set_state("idle")
         self.bubble.hide()
-        self._hide_ok_button()
+        self._hide_buttons()
+        self._write_state_file("idle", "")
+
+    def _on_agree_click(self):
+        """Agree button: focus WorkBuddy so user can manually approve."""
+        _focus_workbuddy_window()
+        self.set_state("idle")
+        self.bubble.hide()
+        self._hide_buttons()
         self._write_state_file("idle", "")
 
     # ── Sound ─────────────────────────────────────────────────

@@ -29,6 +29,7 @@ STATE_ALIASES = {
     "reading":    "review",
     "writing":    "running",
     "searching":  "running-right",
+    "agree":      "waving",   # 请求同意 → 挥手状态 + 特别按钮
 }
 
 # ── State labels (Chinese) ──
