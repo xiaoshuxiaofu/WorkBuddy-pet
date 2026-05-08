@@ -412,7 +412,7 @@ class DesktopPet:
         if not self.sound_enabled:
             return
         try:
-            if state == "waving":
+            if state in ("waving", "agree"):
                 winsound.MessageBeep(winsound.MB_OK)
         except Exception:
             pass
