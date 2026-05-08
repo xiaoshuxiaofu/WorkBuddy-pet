@@ -103,10 +103,23 @@ python <SKILL_DIR>/scripts/pet_bridge.py idle
 | 切换状态 | 双击（循环切换） |
 | 右键菜单 | 右键（状态选择、漫游开关、退出） |
 
-### 2. 生成 Demo 精灵图集
+### 2. 生成精灵图集
+
+支持内置预设和自定义颜色：
 
 ```bash
-python <SKILL_DIR>/scripts/generate_demo_atlas.py --output <输出目录> --name <宠物名>
+# 默认蓝色史莱姆
+python <SKILL_DIR>/scripts/generate_demo_atlas.py --output <输出目录>
+
+# 内置预设
+python <SKILL_DIR>/scripts/generate_demo_atlas.py --output <dir> --preset kunkun --name kunkun
+python <SKILL_DIR>/scripts/generate_demo_atlas.py --output <dir> --preset milk-frog --name milk-frog
+
+# 自定义颜色
+python <SKILL_DIR>/scripts/generate_demo_atlas.py --output <dir> --name mypet --type frog --body 230,160,50 --eye 40,60,40
+
+# 可用预设: blue-slime, kunkun (暗色青系史莱姆), milk-frog (橙色青蛙)
+# 可用类型: slime, frog
 ```
 
 ### 3. 从帧图片合成图集
