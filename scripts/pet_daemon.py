@@ -35,36 +35,52 @@ STATE_FILE = os.path.join(os.path.expanduser("~"), ".workbuddy", "pet_state.json
 WORKBUDDY_DIR = os.path.join(os.path.expanduser("~"), ".workbuddy")
 
 # Auto-detection timing
-ACTIVITY_THRESHOLD = 3.0   # seconds: if DB modified within this window, agent is active
-IDLE_THRESHOLD = 5.0       # seconds: if DB not modified for this long, agent is idle
+ACTIVITY_THRESHOLD = 2.0   # seconds: if session file modified within this window, agent is active
+IDLE_THRESHOLD = 4.0       # seconds: if session file not modified for this long, agent is idle
 WATCH_INTERVAL = 1.0       # seconds between checks
 MANUAL_OVERRIDE_GRACE = 30  # seconds: after manual set, don't auto-override
 
 
+def _find_session_file():
+    """Find the current conversation transcript file."""
+    projects_dir = os.path.join(WORKBUDDY_DIR, "projects")
+    if not os.path.isdir(projects_dir):
+        return None
+    # Find the most recently modified .jsonl transcript file
+    best = None
+    best_mtime = 0
+    for root, dirs, files in os.walk(projects_dir):
+        for f in files:
+            if f.endswith(".jsonl"):
+                path = os.path.join(root, f)
+                try:
+                    mt = os.path.getmtime(path)
+                    if mt > best_mtime:
+                        best_mtime = mt
+                        best = path
+                except OSError:
+                    pass
+    return best
+
+
 def _find_watch_targets():
-    """Find files/dirs to watch for WorkBuddy activity."""
+    """Find the session transcript file to watch."""
     targets = []
-    # WAL file is most frequently updated during agent work
-    wal = os.path.join(WORKBUDDY_DIR, "workbuddy.db-wal")
-    if os.path.exists(wal):
-        targets.append(wal)
-    # Main DB as fallback
-    db = os.path.join(WORKBUDDY_DIR, "workbuddy.db")
-    if os.path.exists(db):
-        targets.append(db)
-    # Also watch sessions directory
-    sessions = os.path.join(WORKBUDDY_DIR, "sessions")
-    if os.path.exists(sessions):
-        targets.append(sessions)
-    # Projects directory (contains conversation transcripts)
-    projects = os.path.join(WORKBUDDY_DIR, "projects")
-    if os.path.exists(projects):
-        targets.append(projects)
+    session_file = _find_session_file()
+    if session_file:
+        targets.append(session_file)
+        print(f"[daemon] Watching session: {os.path.basename(session_file)}")
+    # Fallback: also watch WAL if no session file found
+    if not targets:
+        wal = os.path.join(WORKBUDDY_DIR, "workbuddy.db-wal")
+        if os.path.exists(wal):
+            targets.append(wal)
+            print("[daemon] Watching WAL (fallback)")
     return targets
 
 
 def _get_latest_mtime(targets):
-    """Get the most recent mtime among all watch targets (recursively for dirs)."""
+    """Get the most recent mtime among all watch targets."""
     latest = 0.0
     for target in targets:
         try:
@@ -72,16 +88,6 @@ def _get_latest_mtime(targets):
                 mtime = os.path.getmtime(target)
                 if mtime > latest:
                     latest = mtime
-            elif os.path.isdir(target):
-                # Check files in directory (shallow, for performance)
-                for entry in os.listdir(target):
-                    entry_path = os.path.join(target, entry)
-                    try:
-                        mtime = os.path.getmtime(entry_path)
-                        if mtime > latest:
-                            latest = mtime
-                    except OSError:
-                        pass
         except OSError:
             pass
     return latest
@@ -152,9 +158,22 @@ class PetDaemon:
         return self.auto_detect and time.time() > self.manual_override_until
 
     def _activity_watch_loop(self):
-        """Background thread: watch WorkBuddy activity and auto-set thinking."""
+        """Background thread: watch session file and auto-set thinking."""
+        rescan_counter = 0
         while not self._stop_event.is_set():
             try:
+                # Periodically rescan for latest session file
+                rescan_counter += 1
+                if rescan_counter >= 30:  # Every 30s
+                    rescan_counter = 0
+                    new_targets = _find_watch_targets()
+                    if new_targets and new_targets != self._watch_targets:
+                        self._watch_targets = new_targets
+
+                if not self._watch_targets:
+                    self._stop_event.wait(WATCH_INTERVAL)
+                    continue
+
                 latest = _get_latest_mtime(self._watch_targets)
                 now = time.time()
 
