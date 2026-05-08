@@ -191,7 +191,7 @@ class DesktopPet:
             )
         self.menu.add_cascade(label="切换状态", menu=self._state_menu)
         self.menu.add_separator()
-        self.wander_var = tk.BooleanVar(value=False)
+        self.wander_var = tk.BooleanVar(value=True)
         self.menu.add_checkbutton(label="随机漫游", variable=self.wander_var,
                                    command=self._toggle_wander)
         self.menu.add_separator()
@@ -226,8 +226,7 @@ class DesktopPet:
 
         if self.chat_aware:
             self._poll_chat_state()
-        else:
-            self._start_wander()
+        self._start_wander()  # always on; polling auto-pauses during active states
 
     # ── State file ────────────────────────────────────────────
 
@@ -431,9 +430,7 @@ class DesktopPet:
         if self.chat_aware:
             self._init_state_file()
             self._poll_chat_state()
-            self._stop_wander()
-        else:
-            self._start_wander()
+        # Wander stays on; polling auto-pauses it during non-idle states
 
     def _toggle_wander(self):
         if self.wander_var.get():
