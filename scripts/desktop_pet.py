@@ -166,6 +166,7 @@ class DesktopPet:
             cursor="hand2", command=self._on_ok_click,
         )
         self.ok_btn.pack(pady=(2, 4))
+        self.ok_btn_frame.pack_forget()  # hidden initially
 
         # ── Pixel bubble ──
         self.bubble = PixelBubble(self.root)
@@ -325,13 +326,20 @@ class DesktopPet:
     # ── Bubble & OK button ────────────────────────────────────
 
     def _show_bubble(self, text: str):
+        if not text or not text.strip():
+            return
+        # Draw first so width/height are known, then position
+        self.bubble._draw(text)
         pet_x = self.root.winfo_x()
         pet_y = self.root.winfo_y()
         content_top = self._get_content_top()
         offset_x = (self.frame_w - self.bubble.width) // 2 if self.bubble.width < self.frame_w else -20
         bx = pet_x + offset_x
         by = pet_y + content_top - self.bubble.height + 2
-        self.bubble.show(text, bx, by)
+        self.bubble._win.geometry(f"+{bx}+{by}")
+        self.bubble._win.deiconify()
+        self.bubble._win.lift()
+        self.bubble._visible = True
 
     def _get_content_top(self) -> int:
         """Find topmost non-transparent pixel row of the current frame (scaled)."""
@@ -362,10 +370,10 @@ class DesktopPet:
         return self.frame_h
 
     def _show_ok_button(self):
-        self.ok_btn_frame.place(x=0, y=self._get_content_bottom(), width=self.frame_w)
+        self.ok_btn_frame.pack(fill="x", padx=4)
 
     def _hide_ok_button(self):
-        self.ok_btn_frame.place_forget()
+        self.ok_btn_frame.pack_forget()
 
     def _on_ok_click(self):
         _focus_workbuddy_window()
