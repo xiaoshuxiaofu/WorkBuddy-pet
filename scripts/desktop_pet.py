@@ -52,12 +52,17 @@ def _load_config() -> dict:
 
 
 def _save_config(config: dict):
-    """Persist pet config to disk."""
+    """Persist pet config to disk (merges with existing)."""
     try:
+        existing = {}
+        if os.path.exists(PET_CONFIG_FILE):
+            with open(PET_CONFIG_FILE, "r", encoding="utf-8") as f:
+                existing = json.load(f)
+        existing.update(config)
         os.makedirs(os.path.dirname(PET_CONFIG_FILE), exist_ok=True)
         with open(PET_CONFIG_FILE, "w", encoding="utf-8") as f:
-            json.dump(config, f, indent=2, ensure_ascii=False)
-    except OSError:
+            json.dump(existing, f, indent=2, ensure_ascii=False)
+    except (OSError, json.JSONDecodeError):
         pass
 
 
@@ -115,6 +120,7 @@ class DesktopPet:
         # Config
         config = _load_config()
         self.sound_enabled = config.get("sound_enabled", True)
+        self.agree_enabled = config.get("agree_enabled", True)
 
         # ── Load atlas ──
         self.atlas = Image.open(atlas_path).convert("RGBA")
@@ -198,6 +204,10 @@ class DesktopPet:
         self.menu.add_checkbutton(label="随机漫游", variable=self.wander_var,
                                    command=self._toggle_wander)
         self.menu.add_separator()
+        self.agree_var = tk.BooleanVar(value=self.agree_enabled)
+        self.menu.add_checkbutton(label="同意提示", variable=self.agree_var,
+                                   command=self._toggle_agree)
+        self.menu.add_separator()
         self.chat_aware_var = tk.BooleanVar(value=self.chat_aware)
         self.menu.add_checkbutton(label="聊天感知模式", variable=self.chat_aware_var,
                                    command=self._toggle_chat_aware)
@@ -276,7 +286,7 @@ class DesktopPet:
                         self._play_state_sound(new_state)
 
                         # Show appropriate button
-                        if new_state == "agree":
+                        if new_state == "agree" and self.agree_enabled:
                             self._show_agree_button()
                         elif new_state == "waving":
                             self._show_ok_button()
@@ -410,6 +420,10 @@ class DesktopPet:
                 winsound.MessageBeep(winsound.MB_OK)
         except Exception:
             pass
+
+    def _toggle_agree(self):
+        self.agree_enabled = self.agree_var.get()
+        _save_config({"agree_enabled": self.agree_enabled})
 
     def _toggle_sound(self):
         self.sound_enabled = self.sound_var.get()
