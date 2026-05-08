@@ -149,6 +149,9 @@ class DesktopPet:
         )
         self.canvas.pack()
 
+        # Image item on canvas (must exist before _animate)
+        self.photo_item = self.canvas.create_image(0, 0, anchor="nw")
+
         # ── OK button (shown only during waving state) ──
         self.ok_btn_frame = tk.Frame(self.main_frame, bg="white")
         self.ok_btn = tk.Button(
