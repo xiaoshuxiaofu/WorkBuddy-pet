@@ -1,17 +1,5 @@
 {
   "hooks": {
-    "SessionStart": [
-      {
-        "matcher": "startup",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python \"C:/Users/Admin/.workbuddy/skills/workbuddy-pet/scripts/pet_launch.py\"",
-            "timeout": 10
-          }
-        ]
-      }
-    ],
     "UserPromptSubmit": [
       {
         "hooks": [
@@ -41,6 +29,17 @@
           {
             "type": "command",
             "command": "python \"C:/Users/Admin/.workbuddy/skills/workbuddy-pet/scripts/pet_bridge.py\" waving \"完成！\"",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \"C:/Users/Admin/.workbuddy/skills/workbuddy-pet/scripts/pet_bridge.py\" idle",
             "timeout": 5
           }
         ]

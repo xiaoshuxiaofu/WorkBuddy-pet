@@ -3,7 +3,7 @@ pet_daemon.py - Background bridge daemon for desktop pet state management.
 
 Runs a lightweight HTTP server that receives state commands from hooks/manual use.
 State changes are written to ~/.workbuddy/pet_state.json, which the desktop pet
-polls every 500ms. Includes auto-revert to idle after inactivity timeout.
+polls every 500ms. State persists until explicitly changed (no auto-revert).
 
 Endpoints:
     POST /set     {"state": "thinking", "message": "正在思考..."}  →  set pet state
@@ -13,7 +13,7 @@ Endpoints:
     GET  /status                                                     →  current state info
 
 Usage:
-    python pet_daemon.py [--port 19876] [--timeout 15]
+    python pet_daemon.py [--port 19876]
 """
 
 import os
@@ -25,25 +25,18 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
 
 DEFAULT_PORT = 19876
-IDLE_TIMEOUT = 15  # seconds before auto-revert
 STATE_FILE = os.path.join(os.path.expanduser("~"), ".workbuddy", "pet_state.json")
 
 
 class PetDaemon:
-    def __init__(self, timeout: int = IDLE_TIMEOUT):
-        self.timeout = timeout
+    def __init__(self):
         self.current_state = "idle"
         self.current_message = ""
         self.last_update = time.time()
         self.lock = threading.Lock()
         self._stop_event = threading.Event()
 
-        # Start auto-revert thread
-        self._revert_thread = threading.Thread(target=self._auto_revert_loop, daemon=True)
-        self._revert_thread.start()
-
     def set_state(self, state: str, message: str = ""):
-        """Set pet state and write to state file."""
         with self.lock:
             self.current_state = state
             self.current_message = message
@@ -51,7 +44,6 @@ class PetDaemon:
             self._write_state_file(state, message)
 
     def _write_state_file(self, state: str, message: str):
-        """Write state to the pet state file."""
         try:
             os.makedirs(os.path.dirname(STATE_FILE), exist_ok=True)
             with open(STATE_FILE, "w", encoding="utf-8") as f:
@@ -64,30 +56,15 @@ class PetDaemon:
             print(f"[daemon] Failed to write state file: {e}", file=sys.stderr)
 
     def get_status(self) -> dict:
-        """Get current daemon status."""
         with self.lock:
             elapsed = time.time() - self.last_update
             return {
                 "state": self.current_state,
                 "message": self.current_message,
                 "seconds_since_update": round(elapsed, 1),
-                "timeout": self.timeout,
             }
 
-    def _auto_revert_loop(self):
-        """Background thread: auto-revert to idle after timeout (safety net)."""
-        while not self._stop_event.is_set():
-            with self.lock:
-                if (self.current_state not in ("idle", "waving") and
-                        time.time() - self.last_update > self.timeout):
-                    print(f"[daemon] Auto-revert: {self.current_state} -> idle")
-                    self.current_state = "idle"
-                    self.current_message = ""
-                    self._write_state_file("idle", "")
-            self._stop_event.wait(2)
-
     def shutdown(self):
-        """Shutdown the daemon."""
         self._stop_event.set()
         self.set_state("idle", "")
 
@@ -167,15 +144,13 @@ def main():
     import argparse
     parser = argparse.ArgumentParser(description="Pet state daemon")
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
-    parser.add_argument("--timeout", type=int, default=IDLE_TIMEOUT)
     args = parser.parse_args()
 
-    daemon = PetDaemon(timeout=args.timeout)
+    daemon = PetDaemon()
     PetHandler.daemon = daemon
 
     server = HTTPServer(("127.0.0.1", args.port), PetHandler)
     print(f"[daemon] Pet bridge running on http://127.0.0.1:{args.port}")
-    print(f"[daemon] Auto-revert timeout: {args.timeout}s")
 
     try:
         server.serve_forever()

@@ -30,7 +30,9 @@ python <SKILL_DIR>/scripts/install_hooks.py
 python <SKILL_DIR>/scripts/install_hooks.py --uninstall
 ```
 
-安装后重启 WorkBuddy，hooks 生效。此时每次会话开始会自动启动 daemon + 宠物。
+安装后重启 WorkBuddy，hooks 生效。
+
+> **注意**：`desktop_pet.py` 必须传入 `--atlas` 参数才能运行，不要直接运行它。**始终使用 `pet_launch.py` 来启动或重启宠物。**
 
 ### 方式三：手动启动（调试用）
 
@@ -38,8 +40,16 @@ python <SKILL_DIR>/scripts/install_hooks.py --uninstall
 # Step 1: 启动 daemon
 python <SKILL_DIR>/scripts/pet_daemon.py &
 
-# Step 2: 启动宠物
+# Step 2: 启动宠物（必须带 --atlas）
 python <SKILL_DIR>/scripts/desktop_pet.py --atlas <SKILL_DIR>/assets/demo/blue-slime_atlas.png --manifest <SKILL_DIR>/assets/demo/pet.json --scale 2.0
+```
+
+### 重启宠物
+
+```bash
+# 杀掉所有 python 进程后重新启动
+taskkill /F /IM python.exe
+python <SKILL_DIR>/scripts/pet_launch.py
 ```
 
 ## Hooks 说明
@@ -48,10 +58,10 @@ python <SKILL_DIR>/scripts/desktop_pet.py --atlas <SKILL_DIR>/assets/demo/blue-s
 
 | 事件 | 宠物状态 | 气泡文字 |
 |------|---------|---------|
-| `UserPromptSubmit` | waiting | "正在思考..." |
+| `UserPromptSubmit` | thinking | "正在思考..." |
 | `PostToolUse` | running | "工作中..." |
 | `Stop` | waving | "完成！" + 提示音 |
-| `SessionStart` | — | 自动启动 daemon + 宠物 |
+| `SessionEnd` | idle | — |
 
 ## 聊天感知模式
 
@@ -59,9 +69,10 @@ python <SKILL_DIR>/scripts/desktop_pet.py --atlas <SKILL_DIR>/assets/demo/blue-s
 
 - **Hooks 驱动**：hooks 调用 `pet_bridge.py` 更新状态 → daemon 写入 state 文件 → 宠物读取并切换动画
 - **手动控制**：`python <SKILL_DIR>/scripts/pet_bridge.py <状态> [消息]` 可随时手动设置
-- **waving 持久**：完成状态会保持直到用户点击 OK 按钮或下次消息触发
+- **状态持久**：各状态不会自动恢复，由下一个 hook 事件驱动切换
 - **OK 按钮**：完成时宠物下方出现 OK 按钮，点击可聚焦 WorkBuddy 窗口并回到待机
-- **完成提示音**：进入 waving 状态时播放系统提示音
+- **提示音**：仅在进入 waving（完成）状态时播放系统提示音
+- **声音开关**：右键菜单可切换提示音开关，设置持久化到 `~/.workbuddy/pet_config.json`
 
 ### 手动 bridge 用法
 ```bash
