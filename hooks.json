@@ -1,5 +1,17 @@
 {
   "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \"C:/Users/Admin/.codebuddy/skills/workbuddy-pet/scripts/pet_launch.py\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
     "UserPromptSubmit": [
       {
         "hooks": [
