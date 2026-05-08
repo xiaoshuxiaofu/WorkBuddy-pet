@@ -28,6 +28,7 @@ import json
 import argparse
 import random
 import time
+import ctypes
 import tkinter as tk
 from PIL import Image, ImageTk
 
@@ -121,6 +122,26 @@ class DesktopPet:
             highlightthickness=0,
         )
         self.canvas.pack()
+
+        # OK button (pixel style, shown only during waving/complete state)
+        self.ok_btn_frame = tk.Frame(self.main_frame, bg="white")
+        self.ok_btn = tk.Button(
+            self.ok_btn_frame,
+            text="OK",
+            font=("Courier New", 10, "bold"),
+            bg=BUBBLE_BG,
+            fg=BUBBLE_TEXT,
+            activebackground="#e8e8d8",
+            activeforeground=BUBBLE_TEXT,
+            relief="solid",
+            borderwidth=2,
+            padx=16,
+            pady=2,
+            cursor="hand2",
+            command=self._on_ok_click,
+        )
+        self.ok_btn.pack(pady=(2, 4))
+        # Hide initially
 
         # Tooltip window for chat state messages (separate top-level to avoid
         # being clipped by the transparent-color of the main window)
@@ -277,6 +298,12 @@ class DesktopPet:
                             self._schedule_auto_revert()
                         else:
                             self._cancel_auto_revert()
+
+                        # Show OK button for waving state, hide otherwise
+                        if new_state == "waving":
+                            self._show_ok_button()
+                        else:
+                            self._hide_ok_button()
         except Exception:
             pass
 
@@ -381,6 +408,21 @@ class DesktopPet:
                         return int(py * self.scale)
         return 0
 
+    def _get_content_bottom(self):
+        """Find the bottommost non-transparent pixel row in the current sprite frame."""
+        state_info = self.states.get(self.current_state)
+        if not state_info:
+            return self.frame_h
+        row = state_info["row"]
+        frame_h = FRAME_HEIGHT
+        for py in range(frame_h - 1, -1, -1):
+            for px in range(0, FRAME_WIDTH, 4):
+                pixel = self.atlas.getpixel((px, row * FRAME_HEIGHT + py))
+                if len(pixel) == 4 and pixel[3] > 0:
+                    if not (pixel[0] > 240 and pixel[1] > 240 and pixel[2] > 240):
+                        return int((py + 1) * self.scale)
+        return self.frame_h
+
     def _show_tooltip(self, text: str = None):
         """Show pixel bubble above the pet."""
         msg = text or ""
@@ -424,6 +466,52 @@ class DesktopPet:
         self.auto_revert_job = None
         self.set_state("idle")
         self._hide_tooltip()
+        self._write_state_file("idle", "")
+        self._hide_ok_button()
+
+    def _show_ok_button(self):
+        """Show the OK button below the pet (during waving state)."""
+        bottom = self._get_content_bottom()
+        self.ok_btn_frame.place(x=0, y=bottom, width=self.frame_w)
+
+    def _hide_ok_button(self):
+        """Hide the OK button."""
+        self.ok_btn_frame.place_forget()
+
+    def _on_ok_click(self):
+        """OK button: focus WorkBuddy window and return pet to idle."""
+        # Try to find and focus WorkBuddy window
+        try:
+            hwnd = ctypes.windll.user32.FindWindowW(None, "WorkBuddy")
+            if not hwnd:
+                # Try partial match
+                hwnd = ctypes.windll.user32.FindWindowW(None, None)
+                # Enumerate all top-level windows to find one with "WorkBuddy" in title
+                titles = []
+                def enum_callback(hwnd, _):
+                    length = ctypes.windll.user32.GetWindowTextLengthW(hwnd)
+                    if length > 0:
+                        buf = ctypes.create_unicode_buffer(length + 1)
+                        ctypes.windll.user32.GetWindowTextW(hwnd, buf, length + 1)
+                        title = buf.value
+                        if "WorkBuddy" in title or "workbuddy" in title.lower():
+                            titles.append((hwnd, title))
+                    return True
+                ctypes.windll.user32.EnumWindows(
+                    ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)(enum_callback),
+                    0)
+                if titles:
+                    hwnd = titles[0][0]
+            if hwnd:
+                ctypes.windll.user32.ShowWindow(hwnd, 9)  # SW_RESTORE
+                ctypes.windll.user32.SetForegroundWindow(hwnd)
+        except Exception:
+            pass
+
+        # Set back to idle
+        self.set_state("idle")
+        self._hide_tooltip()
+        self._hide_ok_button()
         self._write_state_file("idle", "")
 
     def _toggle_chat_aware(self):
