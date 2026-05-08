@@ -180,12 +180,16 @@ class DesktopPet:
 
         # ── Context menu ──
         self.menu = tk.Menu(self.root, tearoff=0)
+
+        # State switcher submenu
+        self._state_menu = tk.Menu(self.menu, tearoff=0)
         for state_name in self.states:
             label = STATE_LABELS.get(state_name, state_name)
-            self.menu.add_command(
-                label=f"状态: {label}",
+            self._state_menu.add_command(
+                label=label,
                 command=lambda s=state_name: self.set_state(s),
             )
+        self.menu.add_cascade(label="切换状态", menu=self._state_menu)
         self.menu.add_separator()
         self.wander_var = tk.BooleanVar(value=False)
         self.menu.add_checkbutton(label="随机漫游", variable=self.wander_var,
