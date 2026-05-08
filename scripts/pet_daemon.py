@@ -54,8 +54,8 @@ class PetDaemon:
                     self._dwell_timer.start()
                 return
 
-            # Cancel any pending timer since we're applying a state now
-            if self._dwell_timer is not None:
+            # Only cancel pending timer if we're switching to a different state
+            if self._dwell_timer is not None and self.current_state != state:
                 self._dwell_timer.cancel()
                 self._dwell_timer = None
                 self._pending_state = None
