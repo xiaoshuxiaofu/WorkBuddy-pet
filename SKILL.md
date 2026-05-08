@@ -1,10 +1,20 @@
 ---
 name: workbuddy-pet
-description: WorkBuddy 桌面宠物生成与播放器。当用户想要创建、自定义或启动桌面宠物伙伴时使用。触发词包括"孵化宠物""启动桌面宠物""创建宠物""看看宠物"等桌面伴侣相关请求。支持聊天感知模式，通过 hooks 自动同步 agent 状态并显示像素风对话气泡。
+description: WorkBuddy 桌面宠物生成与播放器。当用户想要创建、自定义或启动桌面宠物伙伴时使用。触发词包括"/pet""孵化宠物""启动桌面宠物""创建宠物""看看宠物"等。支持聊天感知模式，通过 hooks 自动同步 agent 状态。
 agent_created: true
 ---
 
 # WorkBuddy Pet
+
+## /pet 命令
+
+当用户输入 `/pet` 时，**立即执行以下命令启动宠物**（无需询问）：
+
+```bash
+python ~/.workbuddy/skills/workbuddy-pet/scripts/pet_launch.py
+```
+
+如果宠物已经在运行，先检查 daemon 状态再决定。
 
 ## 概述
 
