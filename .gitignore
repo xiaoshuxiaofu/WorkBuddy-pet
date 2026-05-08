@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+*.pyo
+.DS_Store
+output/pets/demo/*.png
+output/pets/demo/*.json
+!output/pets/demo/.gitkeep
