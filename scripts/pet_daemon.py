@@ -2,15 +2,20 @@
 pet_daemon.py - Background bridge daemon for desktop pet state management.
 
 Runs a lightweight HTTP server that the agent calls to update pet state during
-conversations. Features auto-revert to idle after inactivity timeout.
+conversations. Features:
+- Auto-detection: watches WorkBuddy DB activity to infer agent state
+- Auto-revert to idle after inactivity timeout
+- Manual override via HTTP endpoints
 
 Endpoints:
     GET /set?state=thinking&msg=Hello  →  set pet state with message
     GET /idle                            →  force idle immediately
     GET /status                          →  current state info
+    GET /auto/enable                     →  enable auto-detection
+    GET /auto/disable                    →  disable auto-detection
 
 Usage:
-    python pet_daemon.py [--port 19876] [--timeout 15]
+    python pet_daemon.py [--port 19876] [--timeout 15] [--no-auto]
 
 The daemon writes state to ~/.workbuddy/pet_state.json, which the desktop pet
 polls every 500ms.
@@ -27,35 +32,94 @@ from urllib.parse import urlparse, parse_qs
 DEFAULT_PORT = 19876
 IDLE_TIMEOUT = 15  # seconds before auto-revert
 STATE_FILE = os.path.join(os.path.expanduser("~"), ".workbuddy", "pet_state.json")
+WORKBUDDY_DIR = os.path.join(os.path.expanduser("~"), ".workbuddy")
 
-# State aliases mapping
-STATE_ALIASES = {
-    "thinking": "waiting",
-    "coding": "running",
-    "debugging": "failed",
-    "reading": "review",
-    "writing": "running",
-    "searching": "running-right",
-}
+# Auto-detection timing
+ACTIVITY_THRESHOLD = 3.0   # seconds: if DB modified within this window, agent is active
+IDLE_THRESHOLD = 5.0       # seconds: if DB not modified for this long, agent is idle
+WATCH_INTERVAL = 1.0       # seconds between checks
+MANUAL_OVERRIDE_GRACE = 30  # seconds: after manual set, don't auto-override
+
+
+def _find_watch_targets():
+    """Find files/dirs to watch for WorkBuddy activity."""
+    targets = []
+    # WAL file is most frequently updated during agent work
+    wal = os.path.join(WORKBUDDY_DIR, "workbuddy.db-wal")
+    if os.path.exists(wal):
+        targets.append(wal)
+    # Main DB as fallback
+    db = os.path.join(WORKBUDDY_DIR, "workbuddy.db")
+    if os.path.exists(db):
+        targets.append(db)
+    # Also watch sessions directory
+    sessions = os.path.join(WORKBUDDY_DIR, "sessions")
+    if os.path.exists(sessions):
+        targets.append(sessions)
+    # Projects directory (contains conversation transcripts)
+    projects = os.path.join(WORKBUDDY_DIR, "projects")
+    if os.path.exists(projects):
+        targets.append(projects)
+    return targets
+
+
+def _get_latest_mtime(targets):
+    """Get the most recent mtime among all watch targets (recursively for dirs)."""
+    latest = 0.0
+    for target in targets:
+        try:
+            if os.path.isfile(target):
+                mtime = os.path.getmtime(target)
+                if mtime > latest:
+                    latest = mtime
+            elif os.path.isdir(target):
+                # Check files in directory (shallow, for performance)
+                for entry in os.listdir(target):
+                    entry_path = os.path.join(target, entry)
+                    try:
+                        mtime = os.path.getmtime(entry_path)
+                        if mtime > latest:
+                            latest = mtime
+                    except OSError:
+                        pass
+        except OSError:
+            pass
+    return latest
 
 
 class PetDaemon:
-    def __init__(self, timeout: int = IDLE_TIMEOUT):
+    def __init__(self, timeout: int = IDLE_TIMEOUT, auto_detect: bool = True):
         self.timeout = timeout
         self.current_state = "idle"
         self.current_message = ""
         self.last_update = time.time()
+        self.manual_override_until = 0.0  # timestamp until manual override is active
+        self.auto_detect = auto_detect
         self.lock = threading.Lock()
-        self._stop_timer = threading.Event()
-        self._timer_thread = threading.Thread(target=self._auto_revert_loop, daemon=True)
-        self._timer_thread.start()
+        self._stop_event = threading.Event()
 
-    def set_state(self, state: str, message: str = ""):
+        # Watch targets for activity detection
+        self._watch_targets = _find_watch_targets()
+        print(f"[daemon] Watching {len(self._watch_targets)} targets for activity")
+
+        # Start auto-revert thread
+        self._revert_thread = threading.Thread(target=self._auto_revert_loop, daemon=True)
+        self._revert_thread.start()
+
+        # Start activity watcher thread
+        if self.auto_detect:
+            self._watch_thread = threading.Thread(target=self._activity_watch_loop, daemon=True)
+            self._watch_thread.start()
+            print("[daemon] Auto-detection enabled")
+
+    def set_state(self, state: str, message: str = "", manual: bool = False):
         """Set pet state and write to state file."""
         with self.lock:
             self.current_state = state
             self.current_message = message
             self.last_update = time.time()
+            if manual:
+                self.manual_override_until = time.time() + MANUAL_OVERRIDE_GRACE
             self._write_state_file(state, message)
 
     def _write_state_file(self, state: str, message: str):
@@ -66,10 +130,8 @@ class PetDaemon:
                 json.dump({
                     "state": state,
                     "message": message,
-                    "context_used": 0,
-                    "context_total": 128000,
                     "timestamp": time.time(),
-                }, f, indent=2)
+                }, f, indent=2, ensure_ascii=False)
         except Exception as e:
             print(f"[daemon] Failed to write state file: {e}", file=sys.stderr)
 
@@ -82,11 +144,46 @@ class PetDaemon:
                 "message": self.current_message,
                 "seconds_since_update": round(elapsed, 1),
                 "timeout": self.timeout,
+                "auto_detect": self.auto_detect,
             }
 
+    def _should_auto_detect(self) -> bool:
+        """Check if auto-detection should be active (not overridden)."""
+        return self.auto_detect and time.time() > self.manual_override_until
+
+    def _activity_watch_loop(self):
+        """Background thread: watch WorkBuddy activity and auto-set thinking."""
+        while not self._stop_event.is_set():
+            try:
+                latest = _get_latest_mtime(self._watch_targets)
+                now = time.time()
+
+                with self.lock:
+                    if not self._should_auto_detect():
+                        pass  # Manual override active, skip
+                    elif now - latest < ACTIVITY_THRESHOLD:
+                        # Recent activity detected → agent is working
+                        if self.current_state == "idle":
+                            self.current_state = "thinking"
+                            self.current_message = "正在思考..."
+                            self.last_update = now
+                            self._write_state_file("thinking", "正在思考...")
+                    elif (now - latest > IDLE_THRESHOLD and
+                          self.current_state == "thinking" and
+                          now - self.last_update > IDLE_THRESHOLD):
+                        # No recent activity → agent is idle
+                        self.current_state = "idle"
+                        self.current_message = ""
+                        self.last_update = now
+                        self._write_state_file("idle", "")
+            except Exception:
+                pass
+
+            self._stop_event.wait(WATCH_INTERVAL)
+
     def _auto_revert_loop(self):
-        """Background thread: auto-revert to idle after timeout."""
-        while not self._stop_timer.is_set():
+        """Background thread: auto-revert to idle after timeout (safety net)."""
+        while not self._stop_event.is_set():
             with self.lock:
                 if (self.current_state != "idle" and
                         time.time() - self.last_update > self.timeout):
@@ -94,19 +191,18 @@ class PetDaemon:
                     self.current_state = "idle"
                     self.current_message = ""
                     self._write_state_file("idle", "")
-            self._stop_timer.wait(2)  # Check every 2 seconds
+            self._stop_event.wait(2)
 
     def shutdown(self):
         """Shutdown the daemon."""
-        self._stop_timer.set()
+        self._stop_event.set()
         self.set_state("idle", "")
 
 
 class PetHandler(BaseHTTPRequestHandler):
-    daemon: PetDaemon = None  # Set externally
+    daemon: PetDaemon = None
 
     def log_message(self, format, *args):
-        """Suppress default logging noise."""
         pass
 
     def _send_json(self, data: dict, status: int = 200):
@@ -121,7 +217,6 @@ class PetHandler(BaseHTTPRequestHandler):
         path = parsed.path.rstrip("/")
         params = parse_qs(parsed.query)
 
-        # Fix UTF-8 encoding: HTTP handler uses latin-1, re-encode to get real UTF-8
         fixed_params = {}
         for k, v_list in params.items():
             fixed_params[k] = [
@@ -137,18 +232,25 @@ class PetHandler(BaseHTTPRequestHandler):
             if not state:
                 self._send_json({"error": "Missing 'state' parameter"}, 400)
                 return
-            self.daemon.set_state(state, msg)
+            self.daemon.set_state(state, msg, manual=True)
             self._send_json({"ok": True, "state": state, "message": msg})
 
         elif path == "/idle":
-            self.daemon.set_state("idle", "")
+            self.daemon.set_state("idle", "", manual=True)
             self._send_json({"ok": True, "state": "idle"})
+
+        elif path == "/auto/enable":
+            self.daemon.auto_detect = True
+            self._send_json({"ok": True, "auto_detect": True})
+
+        elif path == "/auto/disable":
+            self.daemon.auto_detect = False
+            self._send_json({"ok": True, "auto_detect": False})
 
         else:
             self._send_json({"error": "Unknown endpoint"}, 404)
 
     def do_POST(self):
-        # Also accept POST with JSON body
         parsed = urlparse(self.path)
         path = parsed.path.rstrip("/")
 
@@ -167,10 +269,10 @@ class PetHandler(BaseHTTPRequestHandler):
             if not state:
                 self._send_json({"error": "Missing 'state'"}, 400)
                 return
-            self.daemon.set_state(state, msg)
+            self.daemon.set_state(state, msg, manual=True)
             self._send_json({"ok": True, "state": state, "message": msg})
         elif path == "/idle":
-            self.daemon.set_state("idle", "")
+            self.daemon.set_state("idle", "", manual=True)
             self._send_json({"ok": True, "state": "idle"})
         else:
             self._send_json({"error": "Unknown endpoint"}, 404)
@@ -181,16 +283,17 @@ def main():
     parser = argparse.ArgumentParser(description="Pet state daemon")
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
     parser.add_argument("--timeout", type=int, default=IDLE_TIMEOUT)
+    parser.add_argument("--no-auto", action="store_true", help="Disable auto-detection")
     args = parser.parse_args()
 
-    daemon = PetDaemon(timeout=args.timeout)
+    daemon = PetDaemon(timeout=args.timeout, auto_detect=not args.no_auto)
 
-    # Inject daemon into handler class
     PetHandler.daemon = daemon
 
     server = HTTPServer(("127.0.0.1", args.port), PetHandler)
     print(f"[daemon] Pet bridge running on http://127.0.0.1:{args.port}")
     print(f"[daemon] Auto-revert timeout: {args.timeout}s")
+    print(f"[daemon] Auto-detect: {'ON' if daemon.auto_detect else 'OFF'}")
 
     try:
         server.serve_forever()
