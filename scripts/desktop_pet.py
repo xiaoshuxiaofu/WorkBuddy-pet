@@ -101,6 +101,8 @@ class DesktopPet:
         self.current_frame = 0
         self.dragging = False
         self.drag_offset = (0, 0)
+        self._drag_prev_x = 0  # Track drag direction
+        self._pre_drag_state = "idle"  # State before drag started
         self.wander_job = None
         self.chat_aware = chat_aware
         self.state_file = state_file or STATE_FILE
@@ -393,13 +395,27 @@ class DesktopPet:
         y_root = widget.winfo_rooty() + event.y
         self.drag_offset = (x_root - self.root.winfo_x(),
                            y_root - self.root.winfo_y())
+        self._drag_prev_x = x_root
+        self._pre_drag_state = self.current_state
 
     def _on_drag(self, event):
         if not self.dragging:
             return
         widget = event.widget
-        x = widget.winfo_rootx() + event.x - self.drag_offset[0]
-        y = widget.winfo_rooty() + event.y - self.drag_offset[1]
+        x_root = widget.winfo_rootx() + event.x
+        y_root = widget.winfo_rooty() + event.y
+        dx = x_root - self._drag_prev_x
+
+        # Set animation based on drag direction
+        if dx > 3:
+            self.set_state("running-right")
+        elif dx < -3:
+            self.set_state("running-left")
+
+        self._drag_prev_x = x_root
+
+        x = x_root - self.drag_offset[0]
+        y = y_root - self.drag_offset[1]
         self.root.geometry(f"+{x}+{y}")
         if self.bubble.visible:
             offset_x = (self.frame_w - self.bubble.width) // 2 if self.bubble.width < self.frame_w else -20
@@ -408,6 +424,7 @@ class DesktopPet:
 
     def _on_release(self, event):
         self.dragging = False
+        self.set_state(self._pre_drag_state)
 
     def _on_double_click(self, event):
         names = list(self.states.keys())

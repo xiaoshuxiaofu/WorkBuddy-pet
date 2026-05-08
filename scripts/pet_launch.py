@@ -78,7 +78,7 @@ def launch():
     print("[launch] Starting pet...")
     subprocess.Popen(
         [python, os.path.join(SCRIPTS_DIR, "desktop_pet.py"),
-         "--atlas", ATLAS, "--manifest", MANIFEST], **popen_kw,
+         "--atlas", ATLAS, "--manifest", MANIFEST, "--scale", "1.0"], **popen_kw,
     )
     print("[launch] Done")
 
