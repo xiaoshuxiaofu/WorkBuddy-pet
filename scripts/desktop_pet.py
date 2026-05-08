@@ -2,26 +2,15 @@
 desktop_pet.py - A tkinter-based desktop pet player for Codex-style sprite atlases.
 
 Features:
-- Transparent, borderless window
-- Sprite animation playback from atlas
-- Drag to move the pet
-- Right-click context menu for state switching and exit
-- Pet wanders around the screen edges
-- Double-click to toggle state
-- Chat-aware mode: reads state file to sync with chat context
-- Pixel-art speech bubble for chat messages
-- Sound toggle (right-click menu)
+- Transparent, borderless window with sprite animation
+- Drag to move, right-click context menu, double-click state cycling
+- Chat-aware mode: polls state file to sync with WorkBuddy agent status
+- Pixel-art speech bubble and completion OK button
+- Sound toggle with persistent config
 - State persists until explicitly changed (no auto-revert)
 
 Usage:
     python desktop_pet.py --atlas <atlas.png> [--manifest <pet.json>] [--scale 2.0]
-    python desktop_pet.py --atlas <atlas.png> --state-file <path>
-
-State file format (JSON, written by the chat agent or pet daemon):
-    {
-        "state": "running",
-        "message": "Processing your request..."
-    }
 """
 
 import os
@@ -33,54 +22,75 @@ import time
 import ctypes
 import winsound
 import tkinter as tk
+
 from PIL import Image, ImageTk
 
-FRAME_WIDTH = 192
-FRAME_HEIGHT = 208
-COLUMNS = 8
-DEFAULT_FPS = 10
-WANDER_INTERVAL = 5000  # ms between wander actions
-WANDER_STEP = 60  # pixels per wander step
-STATE_POLL_INTERVAL = 150  # ms between state file checks (faster for catching rapid transitions)
+from pet_constants import (
+    FRAME_WIDTH, FRAME_HEIGHT, COLUMNS, DEFAULT_FPS,
+    WANDER_INTERVAL, WANDER_STEP, STATE_POLL_INTERVAL,
+    STATE_NAMES, STATE_ALIASES, STATE_LABELS,
+    STATE_FILE, PET_CONFIG_FILE, BUBBLE_BG, BUBBLE_TEXT,
+)
+from pixel_bubble import PixelBubble
 
-# Default state file path
-DEFAULT_STATE_FILE = os.path.join(os.path.expanduser("~"), ".workbuddy", "pet_state.json")
-# Pet config file for persisting user preferences
-PET_CONFIG_FILE = os.path.join(os.path.expanduser("~"), ".workbuddy", "pet_config.json")
 
-# Pixel bubble colors
-BUBBLE_BG = "#f8f8f0"     # Off-white (classic pixel UI)
-BUBBLE_BORDER = "#3a3a3a"  # Dark gray
-BUBBLE_TEXT = "#3a3a3a"    # Dark gray
-BUBBLE_PAD_X = 8
-BUBBLE_PAD_Y = 4
-BUBBLE_ARROW_H = 6         # Arrow/triangle height
-
+# ── helpers ──
 
 def _load_config() -> dict:
-    """Load pet config from file, returns defaults if not found."""
+    """Load pet config from file, returning defaults if missing."""
     defaults = {"sound_enabled": True}
     try:
         if os.path.exists(PET_CONFIG_FILE):
             with open(PET_CONFIG_FILE, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            defaults.update(data)
-    except Exception:
+                defaults.update(json.load(f))
+    except (OSError, json.JSONDecodeError):
         pass
     return defaults
 
 
 def _save_config(config: dict):
-    """Save pet config to file."""
+    """Persist pet config to disk."""
     try:
         os.makedirs(os.path.dirname(PET_CONFIG_FILE), exist_ok=True)
         with open(PET_CONFIG_FILE, "w", encoding="utf-8") as f:
             json.dump(config, f, indent=2, ensure_ascii=False)
+    except OSError:
+        pass
+
+
+def _focus_workbuddy_window():
+    """Bring the WorkBuddy window to foreground (Windows only)."""
+    try:
+        hwnd = ctypes.windll.user32.FindWindowW(None, "WorkBuddy")
+        if not hwnd:
+            titles = []
+
+            @ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
+            def enum_callback(hwnd_enum, _):
+                length = ctypes.windll.user32.GetWindowTextLengthW(hwnd_enum)
+                if length <= 0:
+                    return True
+                buf = ctypes.create_unicode_buffer(length + 1)
+                ctypes.windll.user32.GetWindowTextW(hwnd_enum, buf, length + 1)
+                if "WorkBuddy" in buf.value or "workbuddy" in buf.value.lower():
+                    titles.append(hwnd_enum)
+                return True
+
+            ctypes.windll.user32.EnumWindows(enum_callback, 0)
+            if titles:
+                hwnd = titles[0]
+        if hwnd:
+            ctypes.windll.user32.ShowWindow(hwnd, 9)  # SW_RESTORE
+            ctypes.windll.user32.SetForegroundWindow(hwnd)
     except Exception:
         pass
 
 
+# ── main class ──
+
 class DesktopPet:
+    """A desktop pet window with sprite animation and chat-aware mode."""
+
     def __init__(self, atlas_path: str, manifest_path: str = None, scale: float = 2.0,
                  state_file: str = None, chat_aware: bool = True, debug_border: bool = False):
         self.scale = scale
@@ -93,147 +103,78 @@ class DesktopPet:
         self.drag_offset = (0, 0)
         self.wander_job = None
         self.chat_aware = chat_aware
-        self.state_file = state_file or DEFAULT_STATE_FILE
+        self.state_file = state_file or STATE_FILE
         self.last_state_mtime = 0
-        self.last_chat_state = None
+        self.last_chat_state: str | None = None
 
-        # Load sound preference
+        # Config
         config = _load_config()
         self.sound_enabled = config.get("sound_enabled", True)
 
-        # Load atlas image
+        # ── Load atlas ──
         self.atlas = Image.open(atlas_path).convert("RGBA")
 
-        # Load manifest
-        self.states = {}
+        # ── Load manifest ──
+        self.states: dict[str, dict] = {}
         if manifest_path and os.path.exists(manifest_path):
             with open(manifest_path, "r", encoding="utf-8") as f:
                 manifest = json.load(f)
             for s in manifest.get("states", []):
                 self.states[s["name"]] = {
-                    "row": s["row"],
-                    "frames": s["frames"],
+                    "row": s["row"], "frames": s["frames"],
                     "fps": s.get("fps", DEFAULT_FPS),
                 }
         else:
-            default_names = [
-                "idle", "running-right", "running-left", "waving",
-                "jumping", "failed", "waiting", "running", "review",
-            ]
-            for i, name in enumerate(default_names):
+            for i, name in enumerate(STATE_NAMES):
                 self.states[name] = {"row": i, "frames": 8, "fps": DEFAULT_FPS}
 
-        # === Create root window FIRST (required before PhotoImage) ===
+        # ── Root window ──
         self.root = tk.Tk()
         self.root.title("Desktop Pet")
-        self.root.overrideredirect(True)  # No title bar
+        self.root.overrideredirect(True)
         self.root.attributes("-topmost", True)
-
-        # Transparent background (Windows)
         try:
             self.root.wm_attributes("-transparentcolor", "white")
         except Exception:
             pass
 
-        # Main frame to hold pet
         self.main_frame = tk.Frame(self.root, bg="white")
-        self.main_frame.pack()
-
-        # Debug border to show actual window bounds
         if self.debug_border:
             self.main_frame.config(highlightbackground="#FF00FF", highlightthickness=2)
+        self.main_frame.pack()
 
-        # Canvas for displaying the pet
         self.canvas = tk.Canvas(
-            self.main_frame,
-            width=self.frame_w,
-            height=self.frame_h,
-            bg="white",
-            highlightthickness=0,
+            self.main_frame, width=self.frame_w, height=self.frame_h,
+            bg="white", highlightthickness=0,
         )
         self.canvas.pack()
 
-        # OK button (pixel style, shown only during waving/complete state)
+        # ── OK button (shown only during waving state) ──
         self.ok_btn_frame = tk.Frame(self.main_frame, bg="white")
         self.ok_btn = tk.Button(
-            self.ok_btn_frame,
-            text="OK",
+            self.ok_btn_frame, text="OK",
             font=("Courier New", 10, "bold"),
-            bg=BUBBLE_BG,
-            fg=BUBBLE_TEXT,
-            activebackground="#e8e8d8",
-            activeforeground=BUBBLE_TEXT,
-            relief="solid",
-            borderwidth=2,
-            padx=16,
-            pady=2,
-            cursor="hand2",
-            command=self._on_ok_click,
+            bg=BUBBLE_BG, fg=BUBBLE_TEXT,
+            activebackground="#e8e8d8", activeforeground=BUBBLE_TEXT,
+            relief="solid", borderwidth=2, padx=16, pady=2,
+            cursor="hand2", command=self._on_ok_click,
         )
         self.ok_btn.pack(pady=(2, 4))
 
-        # Tooltip window for chat state messages
-        self.tooltip_win = tk.Toplevel(self.root)
-        self.tooltip_win.overrideredirect(True)
-        self.tooltip_win.attributes("-topmost", True)
-        try:
-            self.tooltip_win.wm_attributes("-transparentcolor", "white")
-        except Exception:
-            pass
+        # ── Pixel bubble ──
+        self.bubble = PixelBubble(self.root)
 
-        # Bubble canvas (drawn pixel-art style)
-        self.bubble_canvas = tk.Canvas(
-            self.tooltip_win,
-            bg="white",
-            highlightthickness=0,
-        )
-        self.bubble_canvas.pack()
-        self.tooltip_visible = False
-        self._bubble_width = 0
-        self._bubble_height = 0
-        self.tooltip_win.withdraw()
-
-        # Map unknown chat states to known animation states
-        self.state_aliases = {
-            "thinking": "waiting",
-            "coding": "running",
-            "debugging": "failed",
-            "reading": "review",
-            "writing": "running",
-            "searching": "running-right",
-        }
-
-        # Image item on canvas
-        self.photo_item = self.canvas.create_image(0, 0, anchor="nw")
-
-        # === Pre-cache frames ===
-        self.photo_frames = {}
-        self._precache_frames()
-
-        # Bind events
+        # ── Events ──
         self.canvas.bind("<ButtonPress-1>", self._on_press)
         self.canvas.bind("<B1-Motion>", self._on_drag)
         self.canvas.bind("<ButtonRelease-1>", self._on_release)
         self.canvas.bind("<Double-Button-1>", self._on_double_click)
         self.canvas.bind("<ButtonPress-3>", self._show_menu)
 
-        # State name Chinese labels
-        self.state_labels = {
-            "idle": "待机",
-            "running-right": "向右跑",
-            "running-left": "向左跑",
-            "waving": "挥手/完成",
-            "jumping": "跳跃",
-            "failed": "失败",
-            "waiting": "思考中",
-            "running": "工作中",
-            "review": "审查代码",
-        }
-
-        # Context menu
+        # ── Context menu ──
         self.menu = tk.Menu(self.root, tearoff=0)
         for state_name in self.states:
-            label = self.state_labels.get(state_name, state_name)
+            label = STATE_LABELS.get(state_name, state_name)
             self.menu.add_command(
                 label=f"状态: {label}",
                 command=lambda s=state_name: self.set_state(s),
@@ -242,65 +183,48 @@ class DesktopPet:
         self.menu.add_command(label="随机漫游", command=self._start_wander)
         self.menu.add_command(label="停止漫游", command=self._stop_wander)
         self.menu.add_separator()
-
-        # Chat-aware toggle
         self.chat_aware_var = tk.BooleanVar(value=self.chat_aware)
-        self.menu.add_checkbutton(
-            label="聊天感知模式",
-            variable=self.chat_aware_var,
-            command=self._toggle_chat_aware,
-        )
-
-        # Sound toggle
+        self.menu.add_checkbutton(label="聊天感知模式", variable=self.chat_aware_var,
+                                   command=self._toggle_chat_aware)
         self.sound_var = tk.BooleanVar(value=self.sound_enabled)
-        self.menu.add_checkbutton(
-            label="提示音",
-            variable=self.sound_var,
-            command=self._toggle_sound,
-        )
-
+        self.menu.add_checkbutton(label="提示音", variable=self.sound_var,
+                                   command=self._toggle_sound)
         self.menu.add_separator()
         self.menu.add_command(label="退出", command=self._quit)
 
-        # Position pet at bottom-right of screen
+        # ── Position at bottom-right ──
         screen_w = self.root.winfo_screenwidth()
         screen_h = self.root.winfo_screenheight()
-        start_x = screen_w - self.frame_w - 50
-        start_y = screen_h - self.frame_h - 50
-        self.root.geometry(f"+{start_x}+{start_y}")
+        self.root.geometry(f"+{screen_w - self.frame_w - 50}+{screen_h - self.frame_h - 50}")
 
-        # Initialize state file
+        # ── Pre-cache frames ──
+        self.photo_frames: dict[str, list] = {}
+        self._precache_frames()
+
+        # ── Initialise ──
         if self.chat_aware:
             self._init_state_file()
 
-        # Start animation
         self._animate()
 
-        # Start chat-aware polling
         if self.chat_aware:
             self._poll_chat_state()
-
-        # Auto-wander only if not chat-aware
-        if not self.chat_aware:
+        else:
             self._start_wander()
 
+    # ── State file ────────────────────────────────────────────
+
     def _init_state_file(self):
-        """Create the state file directory and initial state."""
-        state_dir = os.path.dirname(self.state_file)
-        os.makedirs(state_dir, exist_ok=True)
+        os.makedirs(os.path.dirname(self.state_file), exist_ok=True)
         if not os.path.exists(self.state_file):
             self._write_state_file("idle", "")
 
     def _write_state_file(self, state: str, message: str = ""):
-        """Write current state to the state file."""
         try:
             with open(self.state_file, "w", encoding="utf-8") as f:
-                json.dump({
-                    "state": state,
-                    "message": message,
-                    "timestamp": time.time(),
-                }, f, indent=2)
-        except Exception:
+                json.dump({"state": state, "message": message,
+                           "timestamp": time.time()}, f, indent=2)
+        except OSError:
             pass
 
     def _poll_chat_state(self):
@@ -314,240 +238,43 @@ class DesktopPet:
                         data = json.load(f)
                     new_state = data.get("state", "idle")
                     message = data.get("message", "")
-
-                    # Map aliased/unknown states to known animation states
-                    anim_state = self.state_aliases.get(new_state, new_state)
+                    anim_state = STATE_ALIASES.get(new_state, new_state)
 
                     if new_state != self.last_chat_state:
                         self.last_chat_state = new_state
                         if anim_state != "idle":
                             self._stop_wander()
                         self.set_state(anim_state)
-
                         if message:
-                            self._show_tooltip(message)
+                            self._show_bubble(message)
                         else:
-                            self._hide_tooltip()
-
-                        # Play state sound
+                            self.bubble.hide()
                         self._play_state_sound(new_state)
-
-                        # Show OK button for waving state, hide otherwise
                         if new_state == "waving":
                             self._show_ok_button()
                         else:
                             self._hide_ok_button()
-        except Exception:
+        except (OSError, json.JSONDecodeError):
             pass
 
         self.root.after(STATE_POLL_INTERVAL, self._poll_chat_state)
 
-    def _play_state_sound(self, state: str):
-        """Play a notification sound only on task completion."""
-        if not self.sound_enabled:
-            return
-        try:
-            if state == "waving":
-                # Task complete — play notification sound
-                winsound.MessageBeep(winsound.MB_OK)
-        except Exception:
-            pass
-
-    def _toggle_sound(self):
-        """Toggle sound on/off, persist to config."""
-        self.sound_enabled = self.sound_var.get()
-        _save_config({"sound_enabled": self.sound_enabled})
-
-    def _draw_pixel_bubble(self, text: str):
-        """Draw a pixel-art style speech bubble on the bubble canvas."""
-        self.bubble_canvas.delete("all")
-
-        if not text:
-            self._bubble_width = 0
-            self._bubble_height = 0
-            return
-
-        font = ("Courier New", 10, "bold")
-        line_h = 15
-
-        # Measure actual text width
-        lines = text.split("\n")
-        max_line_w = 0
-        for line in lines:
-            tid = self.bubble_canvas.create_text(0, 0, text=line, font=font, anchor="nw")
-            bbox = self.bubble_canvas.bbox(tid)
-            self.bubble_canvas.delete(tid)
-            if bbox:
-                max_line_w = max(max_line_w, bbox[2] - bbox[0])
-
-        num_lines = len(lines)
-        bw = max(max_line_w + BUBBLE_PAD_X * 2 + 4, 40)
-        bh = num_lines * line_h + BUBBLE_PAD_Y * 2 + BUBBLE_ARROW_H + 4
-
-        # Pixel-art border: draw stepped outline
-        self.bubble_canvas.create_rectangle(0, 0, bw, bh - BUBBLE_ARROW_H,
-                                             fill=BUBBLE_BG, outline="")
-        # Pixel-notch corners
-        notch = 3
-        self.bubble_canvas.create_rectangle(0, 0, notch, notch, fill="white", outline="")
-        self.bubble_canvas.create_rectangle(bw - notch, 0, bw, notch, fill="white", outline="")
-        self.bubble_canvas.create_rectangle(0, bh - BUBBLE_ARROW_H - notch, notch, bh - BUBBLE_ARROW_H,
-                                             fill="white", outline="")
-        self.bubble_canvas.create_rectangle(bw - notch, bh - BUBBLE_ARROW_H - notch,
-                                             bw, bh - BUBBLE_ARROW_H, fill="white", outline="")
-
-        # Border lines (2px thick)
-        self.bubble_canvas.create_line(notch, 1, bw - notch, 1, fill=BUBBLE_BORDER, width=2)
-        self.bubble_canvas.create_line(notch, bh - BUBBLE_ARROW_H - 1,
-                                        bw - notch, bh - BUBBLE_ARROW_H - 1,
-                                        fill=BUBBLE_BORDER, width=2)
-        self.bubble_canvas.create_line(1, notch, 1, bh - BUBBLE_ARROW_H - notch,
-                                        fill=BUBBLE_BORDER, width=2)
-        self.bubble_canvas.create_line(bw - 1, notch, bw - 1, bh - BUBBLE_ARROW_H - notch,
-                                        fill=BUBBLE_BORDER, width=2)
-
-        # Arrow/triangle pointing down
-        ax = bw // 2
-        arrow_points = [
-            ax - 5, bh - BUBBLE_ARROW_H,
-            ax + 5, bh - BUBBLE_ARROW_H,
-            ax, bh,
-        ]
-        self.bubble_canvas.create_polygon(arrow_points, fill=BUBBLE_BG, outline=BUBBLE_BORDER, width=1)
-
-        # Draw text
-        for i, line in enumerate(text.split("\n")):
-            y = BUBBLE_PAD_Y + 2 + i * line_h
-            self.bubble_canvas.create_text(
-                bw // 2, y,
-                text=line,
-                font=font,
-                fill=BUBBLE_TEXT,
-                anchor="n",
-            )
-
-        self._bubble_width = bw
-        self._bubble_height = bh
-        self.bubble_canvas.config(width=bw, height=bh)
-
-    def _get_content_top(self):
-        """Find the topmost non-transparent pixel row in the current sprite frame."""
-        state_info = self.states.get(self.current_state)
-        if not state_info:
-            return 0
-        row = state_info["row"]
-        for py in range(FRAME_HEIGHT):
-            for px in range(0, FRAME_WIDTH, 4):
-                pixel = self.atlas.getpixel((px, row * FRAME_HEIGHT + py))
-                if len(pixel) == 4 and pixel[3] > 0:
-                    if not (pixel[0] > 240 and pixel[1] > 240 and pixel[2] > 240):
-                        return int(py * self.scale)
-        return 0
-
-    def _get_content_bottom(self):
-        """Find the bottommost non-transparent pixel row in the current sprite frame."""
-        state_info = self.states.get(self.current_state)
-        if not state_info:
-            return self.frame_h
-        row = state_info["row"]
-        for py in range(FRAME_HEIGHT - 1, -1, -1):
-            for px in range(0, FRAME_WIDTH, 4):
-                pixel = self.atlas.getpixel((px, row * FRAME_HEIGHT + py))
-                if len(pixel) == 4 and pixel[3] > 0:
-                    if not (pixel[0] > 240 and pixel[1] > 240 and pixel[2] > 240):
-                        return int((py + 1) * self.scale)
-        return self.frame_h
-
-    def _show_tooltip(self, text: str = None):
-        """Show pixel bubble above the pet."""
-        msg = text or ""
-        if not msg.strip():
-            return
-
-        self._draw_pixel_bubble(msg)
-
-        pet_x = self.root.winfo_x()
-        pet_y = self.root.winfo_y()
-        content_top = self._get_content_top()
-        offset_x = (self.frame_w - self._bubble_width) // 2 if self._bubble_width < self.frame_w else -20
-        bubble_y = pet_y + content_top - self._bubble_height + 2
-        self.tooltip_win.geometry(f"+{pet_x + offset_x}+{bubble_y}")
-        self.tooltip_win.deiconify()
-        self.tooltip_visible = True
-
-    def _hide_tooltip(self):
-        """Hide the pixel bubble."""
-        if self.tooltip_visible:
-            self.tooltip_win.withdraw()
-            self.tooltip_visible = False
-
-    def _show_ok_button(self):
-        """Show the OK button below the pet (during waving state)."""
-        bottom = self._get_content_bottom()
-        self.ok_btn_frame.place(x=0, y=bottom, width=self.frame_w)
-
-    def _hide_ok_button(self):
-        """Hide the OK button."""
-        self.ok_btn_frame.place_forget()
-
-    def _on_ok_click(self):
-        """OK button: focus WorkBuddy window and return pet to idle."""
-        try:
-            hwnd = ctypes.windll.user32.FindWindowW(None, "WorkBuddy")
-            if not hwnd:
-                titles = []
-                def enum_callback(hwnd, _):
-                    length = ctypes.windll.user32.GetWindowTextLengthW(hwnd)
-                    if length > 0:
-                        buf = ctypes.create_unicode_buffer(length + 1)
-                        ctypes.windll.user32.GetWindowTextW(hwnd, buf, length + 1)
-                        title = buf.value
-                        if "WorkBuddy" in title or "workbuddy" in title.lower():
-                            titles.append((hwnd, title))
-                    return True
-                ctypes.windll.user32.EnumWindows(
-                    ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)(enum_callback),
-                    0)
-                if titles:
-                    hwnd = titles[0][0]
-            if hwnd:
-                ctypes.windll.user32.ShowWindow(hwnd, 9)  # SW_RESTORE
-                ctypes.windll.user32.SetForegroundWindow(hwnd)
-        except Exception:
-            pass
-
-        self.set_state("idle")
-        self._hide_tooltip()
-        self._hide_ok_button()
-        self._write_state_file("idle", "")
-
-    def _toggle_chat_aware(self):
-        """Toggle chat-aware mode."""
-        self.chat_aware = self.chat_aware_var.get()
-        if self.chat_aware:
-            self._init_state_file()
-            self._poll_chat_state()
-            self._stop_wander()
-        else:
-            self._start_wander()
+    # ── Animation ─────────────────────────────────────────────
 
     def _precache_frames(self):
-        """Pre-extract and cache all frames as PhotoImages."""
-        for state_name, state_info in self.states.items():
-            row = state_info["row"]
-            num_frames = state_info["frames"]
+        """Pre-extract all frames as PhotoImages with white→transparent."""
+        for state_name, info in self.states.items():
+            row = info["row"]
             self.photo_frames[state_name] = []
-            for col in range(num_frames):
-                x1 = col * FRAME_WIDTH
-                y1 = row * FRAME_HEIGHT
-                x2 = x1 + FRAME_WIDTH
-                y2 = y1 + FRAME_HEIGHT
-                frame = self.atlas.crop((x1, y1, x2, y2))
+            for col in range(info["frames"]):
+                x1, y1 = col * FRAME_WIDTH, row * FRAME_HEIGHT
+                frame = self.atlas.crop((x1, y1, x1 + FRAME_WIDTH, y1 + FRAME_HEIGHT))
                 frame = frame.resize((self.frame_w, self.frame_h), Image.LANCZOS)
 
-                datas = list(frame.get_flattened_data())
+                # Replace near-white pixels with transparent
+                data = list(frame.get_flattened_data())
                 new_data = []
-                for item in datas:
+                for item in data:
                     if len(item) == 4 and item[3] > 0:
                         if item[0] > 240 and item[1] > 240 and item[2] > 240:
                             new_data.append((255, 255, 255, 0))
@@ -556,74 +283,140 @@ class DesktopPet:
                     else:
                         new_data.append(item)
                 frame.putdata(new_data)
-
-                photo = ImageTk.PhotoImage(frame)
-                self.photo_frames[state_name].append(photo)
+                self.photo_frames[state_name].append(ImageTk.PhotoImage(frame))
 
     def _animate(self):
-        """Animate the current state's frames."""
         state = self.states.get(self.current_state)
-        if not state:
+        if state is None:
             return
-
         frames = self.photo_frames.get(self.current_state, [])
         if not frames:
             return
 
-        self.current_frame = self.current_frame % len(frames)
+        self.current_frame %= len(frames)
         self.canvas.itemconfig(self.photo_item, image=frames[self.current_frame])
         self.current_frame += 1
 
-        fps = state.get("fps", DEFAULT_FPS)
-        delay = int(1000 / fps)
+        delay = int(1000 / state.get("fps", DEFAULT_FPS))
         self.root.after(delay, self._animate)
 
     def set_state(self, state_name: str):
-        """Switch to a different animation state."""
         if state_name in self.states:
             self.current_state = state_name
             self.current_frame = 0
 
+    # ── Bubble & OK button ────────────────────────────────────
+
+    def _show_bubble(self, text: str):
+        pet_x = self.root.winfo_x()
+        pet_y = self.root.winfo_y()
+        content_top = self._get_content_top()
+        offset_x = (self.frame_w - self.bubble.width) // 2 if self.bubble.width < self.frame_w else -20
+        bx = pet_x + offset_x
+        by = pet_y + content_top - self.bubble.height + 2
+        self.bubble.show(text, bx, by)
+
+    def _get_content_top(self) -> int:
+        """Find topmost non-transparent pixel row of the current frame (scaled)."""
+        info = self.states.get(self.current_state)
+        if not info:
+            return 0
+        row = info["row"]
+        for py in range(FRAME_HEIGHT):
+            for px in range(0, FRAME_WIDTH, 4):
+                pixel = self.atlas.getpixel((px, row * FRAME_HEIGHT + py))
+                if len(pixel) == 4 and pixel[3] > 0:
+                    if not (pixel[0] > 240 and pixel[1] > 240 and pixel[2] > 240):
+                        return int(py * self.scale)
+        return 0
+
+    def _get_content_bottom(self) -> int:
+        """Find bottommost non-transparent pixel row (scaled)."""
+        info = self.states.get(self.current_state)
+        if not info:
+            return self.frame_h
+        row = info["row"]
+        for py in range(FRAME_HEIGHT - 1, -1, -1):
+            for px in range(0, FRAME_WIDTH, 4):
+                pixel = self.atlas.getpixel((px, row * FRAME_HEIGHT + py))
+                if len(pixel) == 4 and pixel[3] > 0:
+                    if not (pixel[0] > 240 and pixel[1] > 240 and pixel[2] > 240):
+                        return int((py + 1) * self.scale)
+        return self.frame_h
+
+    def _show_ok_button(self):
+        self.ok_btn_frame.place(x=0, y=self._get_content_bottom(), width=self.frame_w)
+
+    def _hide_ok_button(self):
+        self.ok_btn_frame.place_forget()
+
+    def _on_ok_click(self):
+        _focus_workbuddy_window()
+        self.set_state("idle")
+        self.bubble.hide()
+        self._hide_ok_button()
+        self._write_state_file("idle", "")
+
+    # ── Sound ─────────────────────────────────────────────────
+
+    def _play_state_sound(self, state: str):
+        if not self.sound_enabled:
+            return
+        try:
+            if state == "waving":
+                winsound.MessageBeep(winsound.MB_OK)
+        except Exception:
+            pass
+
+    def _toggle_sound(self):
+        self.sound_enabled = self.sound_var.get()
+        _save_config({"sound_enabled": self.sound_enabled})
+
+    def _toggle_chat_aware(self):
+        self.chat_aware = self.chat_aware_var.get()
+        if self.chat_aware:
+            self._init_state_file()
+            self._poll_chat_state()
+            self._stop_wander()
+        else:
+            self._start_wander()
+
+    # ── Drag & input ──────────────────────────────────────────
+
     def _on_press(self, event):
-        """Start dragging the pet."""
         self.dragging = True
         widget = event.widget
         x_root = widget.winfo_rootx() + event.x
         y_root = widget.winfo_rooty() + event.y
-        self.drag_offset = (x_root - self.root.winfo_x(), y_root - self.root.winfo_y())
+        self.drag_offset = (x_root - self.root.winfo_x(),
+                           y_root - self.root.winfo_y())
 
     def _on_drag(self, event):
-        """Move the pet while dragging."""
-        if self.dragging:
-            widget = event.widget
-            x_root = widget.winfo_rootx() + event.x
-            y_root = widget.winfo_rooty() + event.y
-            x = x_root - self.drag_offset[0]
-            y = y_root - self.drag_offset[1]
-            self.root.geometry(f"+{x}+{y}")
-            if self.tooltip_visible:
-                ct = self._get_content_top()
-                offset_x = (self.frame_w - self._bubble_width) // 2 if self._bubble_width < self.frame_w else -20
-                self.tooltip_win.geometry(f"+{x + offset_x}+{y + ct - self._bubble_height + 2}")
-                self.tooltip_win.lift()
+        if not self.dragging:
+            return
+        widget = event.widget
+        x = widget.winfo_rootx() + event.x - self.drag_offset[0]
+        y = widget.winfo_rooty() + event.y - self.drag_offset[1]
+        self.root.geometry(f"+{x}+{y}")
+        if self.bubble.visible:
+            offset_x = (self.frame_w - self.bubble.width) // 2 if self.bubble.width < self.frame_w else -20
+            ct = self._get_content_top()
+            self.bubble.move(x + offset_x, y + ct - self.bubble.height + 2)
 
     def _on_release(self, event):
-        """Stop dragging."""
         self.dragging = False
 
     def _on_double_click(self, event):
-        """Double-click to cycle through states."""
-        state_names = list(self.states.keys())
-        current_idx = state_names.index(self.current_state) if self.current_state in state_names else 0
-        next_idx = (current_idx + 1) % len(state_names)
-        self.set_state(state_names[next_idx])
+        names = list(self.states.keys())
+        idx = names.index(self.current_state) if self.current_state in names else 0
+        self.set_state(names[(idx + 1) % len(names)])
 
     def _show_menu(self, event):
-        """Show right-click context menu."""
         self.menu.tk_popup(event.x_root, event.y_root)
 
+    # ── Wander ────────────────────────────────────────────────
+
     def _start_wander(self):
-        """Start random wandering."""
         if self.wander_job:
             return
 
@@ -631,9 +424,7 @@ class DesktopPet:
             if self.dragging:
                 self.wander_job = self.root.after(WANDER_INTERVAL, wander)
                 return
-
             action = random.choice(["idle", "move_right", "move_left", "jump", "wave"])
-
             if action == "idle":
                 self.set_state("idle")
             elif action == "move_right":
@@ -646,70 +437,63 @@ class DesktopPet:
                 self.set_state("jumping")
             elif action == "wave":
                 self.set_state("waving")
-
             if action != "idle":
                 self.root.after(2000, lambda: self.set_state("idle") if not self.dragging else None)
-
             self.wander_job = self.root.after(WANDER_INTERVAL, wander)
 
         self.wander_job = self.root.after(WANDER_INTERVAL, wander)
 
     def _stop_wander(self):
-        """Stop wandering."""
         if self.wander_job:
             self.root.after_cancel(self.wander_job)
             self.wander_job = None
 
     def _move_pet(self, dx: int, dy: int):
-        """Move the pet window by dx, dy pixels."""
         x = self.root.winfo_x() + dx
         y = self.root.winfo_y() + dy
-
-        screen_w = self.root.winfo_screenwidth()
-        screen_h = self.root.winfo_screenheight()
-        x = max(0, min(x, screen_w - self.frame_w))
-        y = max(0, min(y, screen_h - self.frame_h - 30))
-
+        sw = self.root.winfo_screenwidth()
+        sh = self.root.winfo_screenheight()
+        x = max(0, min(x, sw - self.frame_w))
+        y = max(0, min(y, sh - self.frame_h - 30))
         self.root.geometry(f"+{x}+{y}")
 
+    # ── Lifecycle ─────────────────────────────────────────────
+
     def _quit(self):
-        """Exit the pet."""
         self._stop_wander()
-        self._hide_tooltip()
+        self.bubble.hide()
+        self.bubble.destroy()
         try:
             if os.path.exists(self.state_file):
                 os.remove(self.state_file)
-        except Exception:
-            pass
-        try:
-            self.tooltip_win.destroy()
-        except Exception:
+        except OSError:
             pass
         self.root.destroy()
 
     def run(self):
-        """Start the pet application."""
         self.root.mainloop()
 
 
+# ── entry point ──
+
 def main():
-    parser = argparse.ArgumentParser(description="Desktop Pet Player")
+    parser = argparse.ArgumentParser(description="WorkBuddy Desktop Pet Player")
     parser.add_argument("--atlas", required=True, help="Path to sprite atlas PNG")
     parser.add_argument("--manifest", default=None, help="Path to pet.json manifest")
     parser.add_argument("--scale", type=float, default=2.0, help="Display scale factor")
     parser.add_argument("--state-file", default=None, help="Path to chat state JSON file")
-    parser.add_argument("--no-chat-aware", action="store_true", help="Disable chat-aware mode")
-    parser.add_argument("--debug-border", action="store_true", help="Show magenta border around pet window for debugging")
+    parser.add_argument("--no-chat-aware", action="store_true",
+                        help="Disable chat-aware mode")
+    parser.add_argument("--debug-border", action="store_true",
+                        help="Show debug border around pet window")
     args = parser.parse_args()
 
     if not os.path.exists(args.atlas):
-        print(f"ERROR: Atlas not found: {args.atlas}")
+        print(f"ERROR: Atlas not found: {args.atlas}", file=sys.stderr)
         sys.exit(1)
 
     pet = DesktopPet(
-        args.atlas,
-        args.manifest,
-        args.scale,
+        args.atlas, args.manifest, args.scale,
         state_file=args.state_file,
         chat_aware=not args.no_chat_aware,
         debug_border=args.debug_border,

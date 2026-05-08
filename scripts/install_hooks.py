@@ -18,8 +18,8 @@ import argparse
 SKILL_DIR = os.path.dirname(os.path.abspath(__file__))
 SETTINGS_FILE = os.path.join(os.path.expanduser("~"), ".workbuddy", "settings.json")
 
-# 用于识别已注入的 hooks 的标记
-HOOK_MARKER = "workbuddy-pet"
+# 用于识别已注入的 pet hooks 的标记
+_HOOK_MARKER = "workbuddy-pet"
 
 
 def load_json(path: str) -> dict:
@@ -135,7 +135,7 @@ def uninstall(args):
             is_pet = False
             for h in hooks_list:
                 cmd = h.get("command", "")
-                if "workbuddy-pet" in cmd:
+                if _HOOK_MARKER in cmd:
                     is_pet = True
                     break
             if not is_pet:

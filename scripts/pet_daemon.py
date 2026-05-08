@@ -24,8 +24,8 @@ import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
 
-DEFAULT_PORT = 19876
-STATE_FILE = os.path.join(os.path.expanduser("~"), ".workbuddy", "pet_state.json")
+from pet_constants import DAEMON_PORT, STATE_FILE
+
 MIN_DWELL = 0.3  # Minimum seconds a state must persist before being overwritten
 
 
@@ -181,7 +181,7 @@ class PetHandler(BaseHTTPRequestHandler):
 def main():
     import argparse
     parser = argparse.ArgumentParser(description="Pet state daemon")
-    parser.add_argument("--port", type=int, default=DEFAULT_PORT)
+    parser.add_argument("--port", type=int, default=DAEMON_PORT)
     args = parser.parse_args()
 
     daemon = PetDaemon()

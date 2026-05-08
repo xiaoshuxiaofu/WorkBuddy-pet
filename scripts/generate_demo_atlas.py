@@ -1,11 +1,14 @@
 """
-generate_demo_atlas.py - Generate a demo sprite atlas with a cute pixel-art character.
+generate_demo_atlas.py - Generate sprite atlases for WorkBuddy desktop pets.
 
-Creates a simple animated character (a round blue slime creature)
-with 9 animation states, each with 8 frames.
+Creates pixel-art characters with 9 animation states, each with 8 frames.
+Supports multiple creature types via presets or custom color parameters.
 
 Usage:
-    python generate_demo_atlas.py --output <output_dir>
+    python generate_demo_atlas.py --output <output_dir>                    # blue slime (default)
+    python generate_demo_atlas.py --output <dir> --preset kunkun           # dark teal slime
+    python generate_demo_atlas.py --output <dir> --preset milk-frog        # orange frog
+    python generate_demo_atlas.py --output <dir> --name mypet --body 255,128,64 --type frog
 """
 
 import os
@@ -24,275 +27,258 @@ STATE_NAMES = [
     "jumping", "failed", "waiting", "running", "review",
 ]
 
+# Preset creature definitions: (body_color, eye_color, accent_color, creature_type)
+PRESETS = {
+    "blue-slime":  {"body": (80, 160, 255), "eye": (40, 40, 60),   "accent": (130, 200, 255), "type": "slime"},
+    "kunkun":      {"body": (30, 30, 40),    "eye": (200, 230, 240), "accent": (100, 180, 200), "type": "slime"},
+    "milk-frog":   {"body": (230, 160, 50),  "eye": (40, 60, 40),   "accent": (255, 200, 80),  "type": "frog"},
+}
 
-def draw_slime(draw, cx, cy, size, color, eye_offset_x=0, eye_offset_y=0,
-               mouth_type="smile", arm_left=0, arm_right=0, squash=1.0, stretch=1.0):
-    """Draw a cute slime character on the given ImageDraw object.
+
+def draw_creature(draw, cx, cy, size, body_color, eye_color=(40, 40, 60),
+                  accent_color=None, eye_offset_x=0, eye_offset_y=0,
+                  mouth_type="smile", arm_left=0, arm_right=0,
+                  squash=1.0, stretch=1.0, creature_type="slime"):
+    """Draw a pixel-art creature on the given ImageDraw.
 
     Args:
-        draw: PIL ImageDraw object
-        cx, cy: Center position
-        size: Base size (radius)
-        color: Body color (r, g, b)
-        eye_offset_x, eye_offset_y: Eye displacement
-        mouth_type: "smile", "sad", "open", "neutral"
-        arm_left, arm_right: Arm angle offset (-30 to 30)
-        squash: Horizontal scale (1.0 = normal)
-        stretch: Vertical scale (1.0 = normal)
+        creature_type: "slime" (round blob) or "frog" (wider body with eye bumps).
+        All other args control positioning and animation offsets.
     """
-    r, g, b = color
+    r, g, b = body_color
+    if accent_color is None:
+        accent_color = (min(r + 40, 255), min(g + 40, 255), min(b + 40, 255))
 
-    # Shadow
+    body_w = int(size * squash)
+    body_h = int(size * stretch)
+
+    # ── Shadow ──
     shadow_w = int(size * 0.8 * squash)
     shadow_h = int(size * 0.15)
     draw.ellipse(
         [cx - shadow_w, cy + size * 0.7, cx + shadow_w, cy + size * 0.7 + shadow_h],
-        fill=(0, 0, 0, 40)
+        fill=(0, 0, 0, 40),
     )
 
-    # Body - ellipse with squash/stretch
-    body_w = int(size * squash)
-    body_h = int(size * stretch)
-    # Main body
-    draw.ellipse(
-        [cx - body_w, cy - body_h, cx + body_w, cy + body_h],
-        fill=(r, g, b, 230)
-    )
-    # Highlight
-    hl_r = int(size * 0.6 * squash)
-    hl_h = int(size * 0.6 * stretch)
-    highlight_color = (min(r + 40, 255), min(g + 40, 255), min(b + 40, 255), 100)
-    draw.ellipse(
-        [cx - hl_r, cy - hl_h, cx + hl_r, cy + hl_h],
-        fill=highlight_color
-    )
-    # Shine
+    # ── Body ──
+    if creature_type == "frog":
+        # Wider, flatter body
+        draw.ellipse(
+            [cx - int(body_w * 1.3), cy - int(body_h * 0.7),
+             cx + int(body_w * 1.3), cy + int(body_h * 0.7)],
+            fill=(r, g, b, 230),
+        )
+        # Lighter belly
+        belly = (min(r + 60, 255), min(g + 60, 255), min(b + 60, 255), 200)
+        draw.ellipse(
+            [cx - int(body_w * 0.8), cy - int(body_h * 0.2),
+             cx + int(body_w * 0.8), cy + int(body_h * 0.5)],
+            fill=belly,
+        )
+        # Eye bumps on top
+        bump_r = int(size * 0.25)
+        for side in (-1, 1):
+            bcx = cx + side * int(size * 0.4)
+            draw.ellipse(
+                [bcx - bump_r, cy - int(size * 0.6) - bump_r,
+                 bcx + bump_r, cy - int(size * 0.6) + bump_r],
+                fill=(r, g, b, 230),
+            )
+    else:
+        # Standard slime body
+        draw.ellipse(
+            [cx - body_w, cy - body_h, cx + body_w, cy + body_h],
+            fill=(r, g, b, 230),
+        )
+        # Highlight patch
+        hl_r = int(size * 0.6 * squash)
+        hl_h = int(size * 0.6 * stretch)
+        draw.ellipse(
+            [cx - hl_r, cy - hl_h, cx + hl_r, cy + hl_h],
+            fill=(*accent_color, 100),
+        )
+
+    # ── Shine spot ──
     shine_x = cx - int(size * 0.3 * squash)
     shine_y = cy - int(size * 0.3 * stretch)
     shine_r = int(size * 0.2)
     draw.ellipse(
         [shine_x - shine_r, shine_y - shine_r, shine_x + shine_r, shine_y + shine_r],
-        fill=(255, 255, 255, 120)
+        fill=(255, 255, 255, 120),
     )
 
-    # Eyes
+    # ── Eyes ──
     eye_spacing = int(size * 0.3)
     eye_size = int(size * 0.12)
     eye_y = cy - int(size * 0.15 * stretch) + eye_offset_y
+    if creature_type == "frog":
+        eye_y = cy - int(size * 0.4)
+        eye_size = int(size * 0.15)
 
-    # Left eye
-    lx = cx - eye_spacing + eye_offset_x
-    draw.ellipse(
-        [lx - eye_size - 2, eye_y - eye_size - 2, lx + eye_size + 2, eye_y + eye_size + 2],
-        fill=(255, 255, 255, 240)
-    )
-    draw.ellipse(
-        [lx - eye_size, eye_y - eye_size, lx + eye_size, eye_y + eye_size],
-        fill=(40, 40, 60, 250)
-    )
-    # Pupil highlight
-    draw.ellipse(
-        [lx - 1, eye_y - eye_size + 1, lx + 3, eye_y - eye_size + 5],
-        fill=(255, 255, 255, 200)
-    )
+    for base_x in (cx - eye_spacing, cx + eye_spacing):
+        ex = base_x + eye_offset_x
+        draw.ellipse(
+            [ex - eye_size - 2, eye_y - eye_size - 2,
+             ex + eye_size + 2, eye_y + eye_size + 2],
+            fill=(255, 255, 255, 240),
+        )
+        draw.ellipse(
+            [ex - eye_size, eye_y - eye_size, ex + eye_size, eye_y + eye_size],
+            fill=(*eye_color, 250),
+        )
+        draw.ellipse(
+            [ex - 1, eye_y - eye_size + 1, ex + 3, eye_y - eye_size + 5],
+            fill=(255, 255, 255, 200),
+        )
 
-    # Right eye
-    rx = cx + eye_spacing + eye_offset_x
-    draw.ellipse(
-        [rx - eye_size - 2, eye_y - eye_size - 2, rx + eye_size + 2, eye_y + eye_size + 2],
-        fill=(255, 255, 255, 240)
-    )
-    draw.ellipse(
-        [rx - eye_size, eye_y - eye_size, rx + eye_size, eye_y + eye_size],
-        fill=(40, 40, 60, 250)
-    )
-    draw.ellipse(
-        [rx - 1, eye_y - eye_size + 1, rx + 3, eye_y - eye_size + 5],
-        fill=(255, 255, 255, 200)
-    )
-
-    # Mouth
+    # ── Mouth ──
     mouth_y = cy + int(size * 0.2 * stretch) + eye_offset_y
     mouth_x = cx + eye_offset_x
-    if mouth_type == "smile":
-        draw.arc(
-            [mouth_x - 8, mouth_y - 4, mouth_x + 8, mouth_y + 8],
-            start=0, end=180, fill=(40, 40, 60, 220), width=2
-        )
-    elif mouth_type == "sad":
-        draw.arc(
-            [mouth_x - 8, mouth_y, mouth_x + 8, mouth_y + 12],
-            start=180, end=360, fill=(40, 40, 60, 220), width=2
-        )
-    elif mouth_type == "open":
-        draw.ellipse(
-            [mouth_x - 5, mouth_y - 2, mouth_x + 5, mouth_y + 6],
-            fill=(40, 40, 60, 200)
-        )
-    elif mouth_type == "neutral":
-        draw.line(
-            [mouth_x - 6, mouth_y + 2, mouth_x + 6, mouth_y + 2],
-            fill=(40, 40, 60, 220), width=2
-        )
+    if creature_type == "frog":
+        mouth_y = cy + int(size * 0.05)
 
-    # Arms (simple stubs)
+    mouth_color = (*eye_color, 220)
+    if mouth_type == "smile":
+        draw.arc([mouth_x - 10, mouth_y - 6, mouth_x + 10, mouth_y + 10],
+                 start=0, end=180, fill=mouth_color, width=2)
+    elif mouth_type == "sad":
+        draw.arc([mouth_x - 10, mouth_y, mouth_x + 10, mouth_y + 14],
+                 start=180, end=360, fill=mouth_color, width=2)
+    elif mouth_type == "open":
+        draw.ellipse([mouth_x - 6, mouth_y - 2, mouth_x + 6, mouth_y + 8],
+                     fill=(*eye_color, 200))
+    elif mouth_type == "neutral":
+        draw.line([mouth_x - 8, mouth_y + 3, mouth_x + 8, mouth_y + 3],
+                  fill=mouth_color, width=2)
+
+    # ── Arms ──
     arm_y = cy + int(size * 0.05 * stretch)
     arm_len = int(size * 0.4)
+    line_w = 4
+    hand_r = 5
+    if creature_type == "frog":
+        arm_y = cy - int(size * 0.1)
+        arm_len = int(size * 0.5)
+        line_w = 5
+        hand_r = 6
 
-    # Left arm
-    la_angle = -60 + arm_left
-    la_rad = math.radians(la_angle)
-    la_x = cx - body_w + int(math.cos(la_rad) * 5)
-    la_end_x = la_x + int(math.cos(la_rad) * arm_len)
-    la_end_y = arm_y + int(math.sin(la_rad) * arm_len)
-    draw.line(
-        [la_x, arm_y, la_end_x, la_end_y],
-        fill=(r, g, b, 200), width=4
-    )
-    # Hand
-    draw.ellipse(
-        [la_end_x - 5, la_end_y - 5, la_end_x + 5, la_end_y + 5],
-        fill=(min(r + 20, 255), min(g + 20, 255), min(b + 20, 255), 220)
-    )
-
-    # Right arm
-    ra_angle = -120 + arm_right
-    ra_rad = math.radians(ra_angle)
-    ra_x = cx + body_w - int(math.cos(math.pi - ra_rad) * 5)
-    ra_end_x = ra_x + int(math.cos(ra_rad) * arm_len)
-    ra_end_y = arm_y + int(math.sin(ra_rad) * arm_len)
-    draw.line(
-        [ra_x, arm_y, ra_end_x, ra_end_y],
-        fill=(r, g, b, 200), width=4
-    )
-    draw.ellipse(
-        [ra_end_x - 5, ra_end_y - 5, ra_end_x + 5, ra_end_y + 5],
-        fill=(min(r + 20, 255), min(g + 20, 255), min(b + 20, 255), 220)
-    )
+    for side, base_x, base_angle in [("left", cx - body_w, -60), ("right", cx + body_w, -120)]:
+        angle = base_angle + (arm_left if side == "left" else arm_right)
+        rad = math.radians(angle)
+        if side == "left":
+            ax = base_x + int(math.cos(rad) * 5)
+        else:
+            ax = base_x - int(math.cos(math.pi - rad) * 5)
+        end_x = ax + int(math.cos(rad) * arm_len)
+        end_y = arm_y + int(math.sin(rad) * arm_len)
+        draw.line([ax, arm_y, end_x, end_y], fill=(r, g, b, 200), width=line_w)
+        draw.ellipse(
+            [end_x - hand_r, end_y - hand_r, end_x + hand_r, end_y + hand_r],
+            fill=(*accent_color, 220),
+        )
 
 
-def generate_demo_atlas(output_dir: str, pet_name: str = "blue-slime"):
-    """Generate a complete demo sprite atlas."""
+def generate_atlas(output_dir: str, pet_name: str,
+                   body_color: tuple, eye_color: tuple = (40, 40, 60),
+                   accent_color: tuple = None, creature_type: str = "slime"):
+    """Generate a complete sprite atlas and manifest."""
     os.makedirs(output_dir, exist_ok=True)
 
     atlas = Image.new("RGBA", (FRAME_WIDTH * COLUMNS, FRAME_HEIGHT * ROWS), (0, 0, 0, 0))
-    color = (80, 160, 255)  # Blue slime
-    base_size = 50  # Base radius
+    if accent_color is None:
+        accent_color = (min(body_color[0] + 40, 255), min(body_color[1] + 40, 255),
+                        min(body_color[2] + 40, 255))
+
+    base_size = 50
     cx = FRAME_WIDTH // 2
     cy = FRAME_HEIGHT // 2 + 20
-
     states_config = []
 
     for row, state_name in enumerate(STATE_NAMES):
         for col in range(COLUMNS):
             frame = Image.new("RGBA", (FRAME_WIDTH, FRAME_HEIGHT), (0, 0, 0, 0))
-            draw = ImageDraw.Draw(frame)
-            t = col / max(COLUMNS - 1, 1)  # 0.0 to 1.0
+            d = ImageDraw.Draw(frame)
+            t = col / max(COLUMNS - 1, 1)
+
+            kwargs = {
+                "body_color": body_color,
+                "eye_color": eye_color,
+                "accent_color": accent_color,
+                "creature_type": creature_type,
+            }
 
             if state_name == "idle":
-                # Gentle breathing / bobbing
                 offset_y = math.sin(t * 2 * math.pi) * 5
-                squash = 1.0 + math.sin(t * 2 * math.pi) * 0.03
-                stretch = 1.0 - math.sin(t * 2 * math.pi) * 0.03
-                draw_slime(draw, cx, cy + offset_y, base_size, color,
-                           squash=squash, stretch=stretch)
+                draw_creature(d, cx, cy + offset_y, base_size,
+                              squash=1.0 + math.sin(t * 2 * math.pi) * 0.03,
+                              stretch=1.0 - math.sin(t * 2 * math.pi) * 0.03,
+                              **kwargs)
 
             elif state_name == "running-right":
-                # Running to the right with leg-like bounce
-                offset_x = math.sin(t * 2 * math.pi) * 3
-                offset_y = -abs(math.sin(t * 2 * math.pi)) * 8
-                squash = 1.0 - abs(math.sin(t * 2 * math.pi)) * 0.05
-                stretch = 1.0 + abs(math.sin(t * 2 * math.pi)) * 0.05
-                draw_slime(draw, cx + offset_x, cy + offset_y, base_size, color,
-                           eye_offset_x=3, squash=squash, stretch=stretch,
-                           arm_left=-10 + math.sin(t * 2 * math.pi) * 20,
-                           arm_right=-10 - math.sin(t * 2 * math.pi) * 20)
+                boff = abs(math.sin(t * 2 * math.pi))
+                draw_creature(d, cx + math.sin(t * 2 * math.pi) * 3, cy - boff * 8, base_size,
+                              eye_offset_x=3,
+                              squash=1.0 - boff * 0.05, stretch=1.0 + boff * 0.05,
+                              arm_left=-10 + math.sin(t * 2 * math.pi) * 20,
+                              arm_right=-10 - math.sin(t * 2 * math.pi) * 20,
+                              **kwargs)
 
             elif state_name == "running-left":
-                # Running to the left (mirror)
-                offset_x = -math.sin(t * 2 * math.pi) * 3
-                offset_y = -abs(math.sin(t * 2 * math.pi)) * 8
-                squash = 1.0 - abs(math.sin(t * 2 * math.pi)) * 0.05
-                stretch = 1.0 + abs(math.sin(t * 2 * math.pi)) * 0.05
-                draw_slime(draw, cx + offset_x, cy + offset_y, base_size, color,
-                           eye_offset_x=-3, squash=squash, stretch=stretch,
-                           arm_left=-10 - math.sin(t * 2 * math.pi) * 20,
-                           arm_right=-10 + math.sin(t * 2 * math.pi) * 20)
+                boff = abs(math.sin(t * 2 * math.pi))
+                draw_creature(d, cx - math.sin(t * 2 * math.pi) * 3, cy - boff * 8, base_size,
+                              eye_offset_x=-3,
+                              squash=1.0 - boff * 0.05, stretch=1.0 + boff * 0.05,
+                              arm_left=-10 - math.sin(t * 2 * math.pi) * 20,
+                              arm_right=-10 + math.sin(t * 2 * math.pi) * 20,
+                              **kwargs)
 
             elif state_name == "waving":
-                # Waving right arm
-                wave_angle = math.sin(t * 2 * math.pi) * 40
-                offset_y = math.sin(t * 2 * math.pi) * 2
-                draw_slime(draw, cx, cy + offset_y, base_size, color,
-                           mouth_type="smile",
-                           arm_right=-80 + wave_angle)
+                wave = math.sin(t * 2 * math.pi)
+                draw_creature(d, cx, cy + wave * 2, base_size,
+                              mouth_type="smile", arm_right=-80 + wave * 40, **kwargs)
 
             elif state_name == "jumping":
-                # Jumping up and down
-                offset_y = -abs(math.sin(t * math.pi)) * 30
-                squash = 1.0 + (1 - abs(math.sin(t * math.pi))) * 0.1
-                stretch = 1.0 + abs(math.sin(t * math.pi)) * 0.1
-                if abs(math.sin(t * math.pi)) < 0.1:
-                    # Landing squash
-                    squash = 1.15
-                    stretch = 0.85
-                draw_slime(draw, cx, cy + offset_y, base_size, color,
-                           mouth_type="open", squash=squash, stretch=stretch,
-                           arm_left=-30, arm_right=-30)
+                jmp = abs(math.sin(t * math.pi))
+                sq, st = 1.0 + (1 - jmp) * 0.1, 1.0 + jmp * 0.1
+                if jmp < 0.1:
+                    sq, st = 1.15, 0.85
+                draw_creature(d, cx, cy - jmp * 30, base_size,
+                              mouth_type="open", squash=sq, stretch=st,
+                              arm_left=-30, arm_right=-30, **kwargs)
 
             elif state_name == "failed":
-                # Sad/failed
-                wobble = math.sin(t * 3 * math.pi) * 3
-                squash = 1.05
-                stretch = 0.95
-                draw_slime(draw, cx + wobble, cy + 5, base_size, color,
-                           eye_offset_y=3, mouth_type="sad",
-                           squash=squash, stretch=stretch,
-                           arm_left=20, arm_right=20)
+                draw_creature(d, cx + math.sin(t * 3 * math.pi) * 3, cy + 5, base_size,
+                              eye_offset_y=3, mouth_type="sad",
+                              squash=1.05, stretch=0.95,
+                              arm_left=20, arm_right=20, **kwargs)
 
             elif state_name == "waiting":
-                # Looking around, waiting
-                look_x = math.sin(t * 2 * math.pi) * 5
-                offset_y = math.sin(t * 4 * math.pi) * 2
-                draw_slime(draw, cx, cy + offset_y, base_size, color,
-                           eye_offset_x=int(look_x), mouth_type="neutral")
+                draw_creature(d, cx, cy + math.sin(t * 4 * math.pi) * 2, base_size,
+                              eye_offset_x=int(math.sin(t * 2 * math.pi) * 5),
+                              mouth_type="neutral", **kwargs)
 
             elif state_name == "running":
-                # Running in place
-                offset_y = -abs(math.sin(t * 2 * math.pi)) * 10
-                squash = 1.0 - abs(math.sin(t * 2 * math.pi)) * 0.08
-                stretch = 1.0 + abs(math.sin(t * 2 * math.pi)) * 0.08
-                draw_slime(draw, cx, cy + offset_y, base_size, color,
-                           mouth_type="open", squash=squash, stretch=stretch,
-                           arm_left=-10 + math.sin(t * 2 * math.pi) * 25,
-                           arm_right=-10 - math.sin(t * 2 * math.pi) * 25)
+                boff = abs(math.sin(t * 2 * math.pi))
+                draw_creature(d, cx, cy - boff * 10, base_size,
+                              mouth_type="open",
+                              squash=1.0 - boff * 0.08, stretch=1.0 + boff * 0.08,
+                              arm_left=-10 + math.sin(t * 2 * math.pi) * 25,
+                              arm_right=-10 - math.sin(t * 2 * math.pi) * 25,
+                              **kwargs)
 
             elif state_name == "review":
-                # Looking at code, inspecting
-                look_x = math.sin(t * 2 * math.pi) * 3
-                tilt = math.sin(t * 2 * math.pi) * 0.03
-                draw_slime(draw, cx, cy, base_size, color,
-                           eye_offset_x=int(look_x), eye_offset_y=-2,
-                           mouth_type="neutral",
-                           arm_right=-60 + math.sin(t * math.pi) * 10)
+                draw_creature(d, cx, cy, base_size,
+                              eye_offset_x=int(math.sin(t * 2 * math.pi) * 3),
+                              eye_offset_y=-2, mouth_type="neutral",
+                              arm_right=-60 + math.sin(t * math.pi) * 10,
+                              **kwargs)
 
-            # Paste frame into atlas
             x = col * FRAME_WIDTH
             y = row * FRAME_HEIGHT
             atlas.paste(frame, (x, y), frame)
 
-        fps = 10
-        if state_name in ("idle", "waiting", "review"):
-            fps = 8
-        elif state_name == "failed":
-            fps = 6
-
-        states_config.append({
-            "name": state_name,
-            "row": row,
-            "frames": COLUMNS,
-            "fps": fps,
-        })
+        fps = {"idle": 8, "waiting": 8, "review": 8, "failed": 6}.get(state_name, 10)
+        states_config.append({"name": state_name, "row": row, "frames": COLUMNS, "fps": fps})
 
     # Save atlas
     atlas_path = os.path.join(output_dir, f"{pet_name}_atlas.png")
@@ -301,12 +287,9 @@ def generate_demo_atlas(output_dir: str, pet_name: str = "blue-slime"):
 
     # Save manifest
     manifest = {
-        "name": pet_name,
-        "version": "1.0",
-        "frame_width": FRAME_WIDTH,
-        "frame_height": FRAME_HEIGHT,
-        "columns": COLUMNS,
-        "states": states_config,
+        "name": pet_name, "version": "1.0",
+        "frame_width": FRAME_WIDTH, "frame_height": FRAME_HEIGHT,
+        "columns": COLUMNS, "states": states_config,
     }
     manifest_path = os.path.join(output_dir, "pet.json")
     with open(manifest_path, "w", encoding="utf-8") as f:
@@ -317,12 +300,32 @@ def generate_demo_atlas(output_dir: str, pet_name: str = "blue-slime"):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Generate demo sprite atlas")
-    parser.add_argument("--output", default="./output/pets/demo", help="Output directory")
-    parser.add_argument("--name", default="blue-slime", help="Pet name")
+    parser = argparse.ArgumentParser(description="Generate a WorkBuddy pet sprite atlas.")
+    parser.add_argument("--output", required=True, help="Output directory for atlas and manifest.")
+    parser.add_argument("--name", default="blue-slime", help="Base name for the pet (default: blue-slime).")
+    parser.add_argument("--preset", choices=list(PRESETS.keys()),
+                        help="Use a built-in preset (overrides --type and color args).")
+    parser.add_argument("--type", choices=["slime", "frog"], default="slime",
+                        help="Creature body type (default: slime).")
+    parser.add_argument("--body", help="Body color as R,G,B (e.g. 80,160,255).")
+    parser.add_argument("--eye", help="Eye color as R,G,B (e.g. 40,40,60).")
+    parser.add_argument("--accent", help="Accent/hand color as R,G,B.")
     args = parser.parse_args()
 
-    generate_demo_atlas(args.output, args.name)
+    # Resolve preset or build from arguments
+    if args.preset:
+        p = PRESETS[args.preset]
+        body_color = p["body"]
+        eye_color = p["eye"]
+        accent_color = p["accent"]
+        creature_type = p["type"]
+    else:
+        body_color = tuple(int(x) for x in args.body.split(",")) if args.body else (80, 160, 255)
+        eye_color = tuple(int(x) for x in args.eye.split(",")) if args.eye else (40, 40, 60)
+        accent_color = tuple(int(x) for x in args.accent.split(",")) if args.accent else None
+        creature_type = args.type
+
+    generate_atlas(args.output, args.name, body_color, eye_color, accent_color, creature_type)
 
 
 if __name__ == "__main__":
